@@ -86,6 +86,7 @@ export default function Dashboard() {
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const frameBufferRef = useRef<Landmark[][]>([]);
+  const lastFrameSentRef = useRef<number>(0);
 
   // Dashboard data derived from WS state
   const [data, setData] = useState<DashboardData>(() => ({
@@ -96,12 +97,14 @@ export default function Dashboard() {
   // TTS playback: fetch+blob
   const playAudioUrl = useCallback(async (audioUrl: string) => {
     try {
+      console.log('[TTS] 开始播放:', audioUrl?.substring(0, 80));
       const resp = await fetch(audioUrl);
       const blob = await resp.blob();
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
       audio.onended = () => URL.revokeObjectURL(blobUrl);
       await audio.play();
+      console.log('[TTS] blob 播放成功');
     } catch (e) {
       console.error('[TTS] blob 播放失败:', e);
     }
@@ -154,6 +157,7 @@ export default function Dashboard() {
       }
       case 'tts_ready': {
         const tts = msg.payload as TTSReadyPayload;
+        console.log('[TTS] 收到 tts_ready:', tts.audioUrl?.substring(0, 80));
         playAudioUrl(tts.audioUrl);
         break;
       }
@@ -335,25 +339,22 @@ export default function Dashboard() {
             ctx.fill();
           }
 
-          // Buffer and send to WS
+          // Send as pose_frame for real-time coaching + TTS
           const wsLandmarks: Landmark[] = lm.map((p: { x: number; y: number; z: number; visibility?: number }) => ({
             x: p.x, y: p.y, z: p.z, visibility: p.visibility ?? 1,
           }));
 
-          frameBufferRef.current.push(wsLandmarks);
-          if (frameBufferRef.current.length >= 5) {
+          // Throttle to ~10fps to match backend ALGORITHM_INTERVAL_MS
+          const now = Date.now();
+          if (!lastFrameSentRef.current || now - lastFrameSentRef.current >= 100) {
+            lastFrameSentRef.current = now;
             wsRef.current?.send({
-              type: 'pose_batch',
+              type: 'pose_frame',
               payload: {
-                frames: frameBufferRef.current.map((landmarks, idx) => ({
-                  landmarks,
-                  timestamp: Date.now() - (frameBufferRef.current.length - idx) * 33,
-                })),
-                exercise: selectedExercise === 'auto' ? undefined : selectedExercise,
-                sessionId: sessionIdRef.current,
+                landmarks: wsLandmarks,
+                timestamp: now,
               },
             });
-            frameBufferRef.current = [];
           }
         } else {
           setPoseDetected(false);
