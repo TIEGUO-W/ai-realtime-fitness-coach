@@ -149,9 +149,12 @@ function processFrameAlgorithms(landmarks: Landmark[]) {
       stage: result.stage,
       repCount: result.repCount,
       quality: result.quality.qualityScore >= 85 ? 'good' : result.quality.qualityScore >= 60 ? 'warning' : 'error',
+      qualityScore: result.quality.qualityScore,
       effect: result.effect,
       kneeAngle: result.angles.kneeAngle,
       hipAngle: result.angles.hipAngle,
+      errors: result.quality.errors,
+      warnings: result.quality.warnings,
     },
   };
   broadcastToBrowsers(JSON.stringify(algoMsg));

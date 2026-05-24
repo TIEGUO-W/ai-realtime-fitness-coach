@@ -68,7 +68,10 @@ export function handleCoachingConnection(ws: WebSocket): void {
 
     // 切换运动类型
     if (msg.type === 'set_exercise') {
-      currentExercise = (msg.payload as { exercise: string }).exercise || 'squat';
+      const raw = (msg.payload as { exercise: string }).exercise || 'squat';
+      // 'auto' 或未知类型暂用 squat，后续可实现自动识别
+      const supported = ['squat', 'push_up', 'plank', 'lunge', 'jumping_jack', 'high_knees', 'sit_up'];
+      currentExercise = supported.includes(raw) ? raw : 'squat';
       algorithm.reset();
       prevRepCount = 0;
       return;
@@ -181,9 +184,12 @@ export function handleCoachingConnection(ws: WebSocket): void {
             repCount: result.repCount,
             quality: result.quality.qualityScore >= 85 ? 'good' as const
               : result.quality.qualityScore >= 60 ? 'warning' as const : 'error' as const,
+            qualityScore: result.quality.qualityScore,
             effect: result.effect,
             kneeAngle: result.angles.kneeAngle,
             hipAngle: result.angles.hipAngle,
+            errors: result.quality.errors,
+            warnings: result.quality.warnings,
           },
         });
       }
@@ -230,7 +236,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
                 quality: qualityLevel,
                 effect: result.effect,
                 tips: [coaching.text],
-                encouragement: '',
+                encouragement: coaching.text,
               },
             });
 
@@ -312,7 +318,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
           quality: 'good' as const,
           effect: null,
           tips: [text],
-          encouragement: '',
+          encouragement: text,
         },
       });
       synthQuick(text).then(audioUrl => {

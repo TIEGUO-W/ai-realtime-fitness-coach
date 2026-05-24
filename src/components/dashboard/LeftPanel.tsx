@@ -21,6 +21,8 @@ interface LeftPanelProps {
   voice: CoachVoice;
   onPersonalityChange: (p: CoachPersonality) => void;
   onVoiceChange: (v: CoachVoice) => void;
+  isSpeaking?: boolean;
+  coachMessage?: string;
 }
 
 function intensityColor(i: number): string {
@@ -78,6 +80,8 @@ export default function LeftPanel({
   voice,
   onPersonalityChange,
   onVoiceChange,
+  isSpeaking = false,
+  coachMessage = '',
 }: LeftPanelProps) {
   const { assistant, biometrics, workout } = data;
 
@@ -154,15 +158,17 @@ export default function LeftPanel({
   const handleSplineLoad = useCallback((app: any) => {
     stopTalking();
     splineAppRef.current = app;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mouth = (app as any).getAllObjects().find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (o: any) => o.name.toLowerCase() === 'mouth',
+    // Try multiple common mouth object names
+    const allObjects = (app as any).getAllObjects();
+    const mouth = allObjects.find(
+      (o: any) => ['mouth', 'mouth_object', 'Mouth', 'jaw', 'Jaw'].includes(o.name),
     );
     if (mouth) {
+      console.log('[Spline] Found mouth object:', mouth.name);
       mouthRef.current = mouth.scale;
       originalMouthScaleRef.current = { x: mouth.scale.x, y: mouth.scale.y, z: mouth.scale.z };
     } else {
+      console.warn('[Spline] No mouth object found. Available objects:', allObjects.map((o: any) => o.name).join(', '));
       mouthRef.current = null;
       originalMouthScaleRef.current = null;
     }
@@ -191,9 +197,17 @@ export default function LeftPanel({
     }
   }, [autoModel, activeModel, stopTalking]);
 
+  // Track speaking state with ref to avoid re-render dependency issues
+  const prevIsSpeakingRef = useRef(false);
   useEffect(() => {
-    startTalking(assistant.message);
-  }, [assistant.message, startTalking]);
+    const speakingChanged = isSpeaking !== prevIsSpeakingRef.current;
+    prevIsSpeakingRef.current = isSpeaking;
+    if (isSpeaking && (coachMessage || assistant.message)) {
+      startTalking(coachMessage || assistant.message);
+    } else if (!isSpeaking && speakingChanged) {
+      stopTalking();
+    }
+  }, [isSpeaking, assistant.message, startTalking, stopTalking, coachMessage]);
 
   useEffect(() => {
     return () => {

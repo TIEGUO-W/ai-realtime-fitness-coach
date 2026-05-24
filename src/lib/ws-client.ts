@@ -51,9 +51,12 @@ export interface AlgorithmUpdatePayload {
   stage: string;
   repCount: number;
   quality: 'good' | 'warning' | 'error';
+  qualityScore: number;
   effect: FrontendEffect;
   kneeAngle: number | null;
   hipAngle: number | null;
+  errors: string[];
+  warnings: string[];
 }
 
 export interface TTSReadyPayload {

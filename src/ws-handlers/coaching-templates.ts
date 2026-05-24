@@ -195,9 +195,11 @@ const EXERCISE_TEMPLATES: Record<string, CoachingTemplates> = {
   squat: squatTemplates,
   deadlift: deadliftTemplates,
   pushup: pushupTemplates,
+  push_up: pushupTemplates,        // 算法 key 别名
   lunge: lungeTemplates,
   plank: plankTemplates,
   high_knee: highKneeTemplates,
+  high_knees: highKneeTemplates,   // 算法 key 别名
   jumping_jack: jumpingJackTemplates,
 };
 
@@ -206,10 +208,13 @@ const EXERCISE_NAMES: Record<string, string> = {
   squat: '深蹲',
   deadlift: '硬拉',
   pushup: '俯卧撑',
+  push_up: '俯卧撑',      // 算法 key 别名
   lunge: '弓步蹲',
   plank: '平板支撑',
   high_knee: '高抬腿',
+  high_knees: '高抬腿',   // 算法 key 别名
   jumping_jack: '开合跳',
+  sit_up: '仰卧起坐',
 };
 
 /**

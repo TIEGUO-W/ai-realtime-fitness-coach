@@ -34,14 +34,20 @@ interface RightPanelProps {
 }
 
 const EXERCISES = [
-  { id: 'auto', label: '自动识别', icon: '🎯' },
-  { id: 'squat', label: '深蹲', icon: '🏋' },
-  { id: 'pushup', label: '俯卧撑', icon: '💪' },
-  { id: 'deadlift', label: '硬拉', icon: '🔧' },
-  { id: 'plank', label: '平板支撑', icon: '🧘' },
-  { id: 'lunge', label: '弓步蹲', icon: '🦵' },
-  { id: 'jumping_jack', label: '开合跳', icon: '⭐' },
+  { id: 'auto', label: '自动识别', icon: '🎯', backend: 'auto' },
+  { id: 'squat', label: '深蹲', icon: '🏋', backend: 'squat' },
+  { id: 'push_up', label: '俯卧撑', icon: '💪', backend: 'push_up' },
+  { id: 'plank', label: '平板支撑', icon: '🧘', backend: 'plank' },
+  { id: 'lunge', label: '弓步蹲', icon: '🦵', backend: 'lunge' },
+  { id: 'jumping_jack', label: '开合跳', icon: '⭐', backend: 'jumping_jack' },
+  { id: 'high_knees', label: '高抬腿', icon: '🏃', backend: 'high_knees' },
 ] as const;
+
+/** 后端 key → 中文名映射 */
+export const EXERCISE_LABELS: Record<string, string> = Object.fromEntries(
+  EXERCISES.map(e => [e.id, e.label]),
+);
+EXERCISE_LABELS['pushup'] = '俯卧撑'; // 兼容旧 key
 
 export default function RightPanel({
   workout,

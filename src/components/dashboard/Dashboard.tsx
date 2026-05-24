@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import LeftPanel from './LeftPanel';
-import RightPanel from './RightPanel';
+import RightPanel, { EXERCISE_LABELS } from './RightPanel';
 import CustomPlanModal from './CustomPlanModal';
 import WorkoutSummaryModal from './WorkoutSummaryModal';
 import type { DashboardData, CoachPersonality, CoachVoice, Workout, Biometrics } from '@/types/dashboard';
@@ -94,18 +94,32 @@ export default function Dashboard() {
     workout: { ...mockData.workout, currentAction: '深蹲', targetReps: 20 },
   }));
 
+  // Speaking state for monster mouth animation
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const currentCoachMsgRef = useRef('');
+
   // TTS playback: fetch+blob
   const playAudioUrl = useCallback(async (audioUrl: string) => {
     try {
       console.log('[TTS] 开始播放:', audioUrl?.substring(0, 80));
+      setIsSpeaking(true);
       const resp = await fetch(audioUrl);
       const blob = await resp.blob();
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
-      audio.onended = () => URL.revokeObjectURL(blobUrl);
+      audio.onended = () => {
+        URL.revokeObjectURL(blobUrl);
+        setIsSpeaking(false);
+        console.log('[TTS] 播放结束');
+      };
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        console.error('[TTS] 音频播放出错');
+      };
       await audio.play();
       console.log('[TTS] blob 播放成功');
     } catch (e) {
+      setIsSpeaking(false);
       console.error('[TTS] blob 播放失败:', e);
     }
   }, []);
@@ -126,9 +140,23 @@ export default function Dashboard() {
           ...prev,
           workout: {
             ...prev.workout,
-            currentAction: p.exercise || prev.workout.currentAction,
+            currentAction: EXERCISE_LABELS[p.exercise] || p.exercise || prev.workout.currentAction,
             reps: p.repCount,
             isFormDeformed: p.quality === 'error',
+            score: p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40),
+          },
+        }));
+        break;
+      }
+      case 'rep_completed': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as { repCount: number; effect: unknown; quality: number };
+        setData(prev => ({
+          ...prev,
+          workout: {
+            ...prev.workout,
+            reps: p.repCount,
+            score: p.quality ?? prev.workout.score,
           },
         }));
         break;
@@ -138,18 +166,23 @@ export default function Dashboard() {
         setRepCount(fb.repCount);
         setDetectedExercise(fb.exercise);
         setQuality(fb.quality);
+        const coachMsg = fb.encouragement || (fb.tips.length > 0 ? fb.tips[0] : '');
+        if (coachMsg) {
+          lastCoachMsgTimeRef.current = Date.now();
+          currentCoachMsgRef.current = coachMsg;
+        }
         setData(prev => ({
           ...prev,
           workout: {
             ...prev.workout,
-            currentAction: fb.exercise || prev.workout.currentAction,
+            currentAction: EXERCISE_LABELS[fb.exercise] || fb.exercise || prev.workout.currentAction,
             reps: fb.repCount,
             isFormDeformed: fb.quality === 'error',
-            score: fb.quality === 'good' ? 90 : fb.quality === 'warning' ? 70 : 40,
+            score: prev.workout.score,
           },
           assistant: {
-            message: fb.encouragement,
-            isAlert: fb.quality === 'error',
+            message: coachMsg || prev.assistant.message,
+            isAlert: fb.quality === 'error' || fb.quality === 'warning',
             modelId: prev.assistant.modelId,
           },
         }));
@@ -458,11 +491,17 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [isRunning, repCount]);
 
-  // ─── Coach personality integration ───────────────────
+  // ─── Coach personality: fallback only when backend is silent ───
+  const lastCoachMsgTimeRef = useRef(Date.now());
   useEffect(() => {
-    // Use local coachVoice for immediate feedback based on personality
+    // Update timestamp whenever coaching_feedback arrives
+  }, [data.assistant.message]);
+  useEffect(() => {
+    // Only use local coachVoice as fallback when backend hasn't sent a message in 15+ seconds
     if (!isRunning) return;
     const interval = setInterval(() => {
+      const timeSinceLastMsg = Date.now() - lastCoachMsgTimeRef.current;
+      if (timeSinceLastMsg < 15000) return; // backend is active, skip local
       const localMsg = getCoachMessage(
         data.biometrics.heartRate,
         data.workout.score,
@@ -470,6 +509,7 @@ export default function Dashboard() {
         data.workout.isFormDeformed,
         personality,
       );
+      lastCoachMsgTimeRef.current = Date.now();
       setData(prev => ({
         ...prev,
         assistant: {
@@ -563,6 +603,8 @@ export default function Dashboard() {
           voice={voice}
           onPersonalityChange={setPersonality}
           onVoiceChange={setVoice}
+          isSpeaking={isSpeaking}
+          coachMessage={currentCoachMsgRef.current}
         />
       </div>
 
