@@ -96,16 +96,25 @@ export function setupCameraHandler(wss: WebSocketServer) {
   });
 }
 
-// ─── 规则算法 + 定时 LLM 话术 + TTS ─────────────────────
+// ─── 规则算法 + 定时豆包教练话术 + 语音 ─────────────────────
 import { PoseAlgorithmEngine, type AlgorithmResult } from './pose-algorithm';
 import { generateCoaching } from './coaching-engine';
 import type { WsMessage, Landmark, CoachingFeedback, AlgorithmUpdatePayload, TTSReadyPayload } from '../lib/ws-client';
+
+const DOUBAO_COACH_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
+const COACH_MODE = process.env.COACH_MODE || 'doubao'; // 'doubao'(豆包当教练) 或 'legacy'(旧LLM+TTS模式)
+
+const EXERCISE_NAMES: Record<string, string> = {
+  squat: '深蹲', deadlift: '硬拉', pushup: '俯卧撑',
+  lunge: '弓步蹲', plank: '平板支撑', highknees: '高抬腿', jumpingjack: '开合跳',
+};
 
 let currentExercise: string | undefined;
 let algorithmEngine: PoseAlgorithmEngine | null = null;
 let lastAlgoResult: AlgorithmResult | null = null;
 let analyzeTimer: ReturnType<typeof setInterval> | null = null;
-const ANALYZE_INTERVAL_MS = 3000;
+let coachBusy = false;
+const ANALYZE_INTERVAL_MS = 5000; // 豆包教练每5秒
 let ttsClient: import('coze-coding-dev-sdk').TTSClient | null = null;
 
 function getAlgorithmEngine(): PoseAlgorithmEngine {
@@ -159,40 +168,130 @@ function processFrameAlgorithms(landmarks: Landmark[]) {
 function startNarrationLoop() {
   if (analyzeTimer) return;
   analyzeTimer = setInterval(async () => {
-    if (!lastAlgoResult) return;
+    if (!lastAlgoResult || coachBusy) return;
+    coachBusy = true;
 
     try {
-      // 用最新的算法结果生成教练反馈（LLM 辅助话术）
-      const feedback = await generateCoaching(lastAlgoResult);
-      const msg: WsMessage<CoachingFeedback> = {
-        type: 'coaching:feedback',
-        payload: feedback,
-      };
-      broadcastToBrowsers(JSON.stringify(msg));
-
-      // TTS 语音播放
-      const ttsText = [...feedback.tips, feedback.encouragement].filter(Boolean).join('。');
-      if (ttsText) {
-        try {
-          const client = await getTTSClient();
-          const ttsResult = await client.synthesize({
-            uid: 'pose-coach-camera',
-            text: ttsText,
-            speaker: 'zh_male_m191_uranus_bigtts',
-          });
-          const ttsMsg: WsMessage<TTSReadyPayload> = {
-            type: 'tts_ready',
-            payload: { audioUrl: ttsResult.audioUri, text: ttsText },
-          };
-          broadcastToBrowsers(JSON.stringify(ttsMsg));
-        } catch (ttsErr) {
-          console.error('[ws/camera] TTS error:', ttsErr);
-        }
+      if (COACH_MODE === 'doubao') {
+        await askDoubaoCoachCamera(lastAlgoResult);
+      } else {
+        await askLegacyCoachCamera(lastAlgoResult);
       }
     } catch (err) {
       console.error('[ws/camera] coaching error:', err);
+    } finally {
+      coachBusy = false;
     }
   }, ANALYZE_INTERVAL_MS);
+}
+
+/** 豆包教练模式（远程）：把运动状态喂给豆包，它自己出话术+语音 */
+async function askDoubaoCoachCamera(result: AlgorithmResult) {
+  const exerciseName = EXERCISE_NAMES[result.exercise] || result.exercise;
+  const stageDesc: Record<string, string> = {
+    standing: '站立准备', ascending: '上升中', descending: '下放中',
+    bottom: '最低点', holding: '保持中', extended: '展开', contracted: '收缩',
+    up: '抬腿中', down: '放腿中', left: '向左', right: '向右',
+    neutral: '中立位',
+  };
+
+  const stateDesc = [
+    `运动：${exerciseName}`,
+    `次数：第${result.repCount}次`,
+    `阶段：${stageDesc[result.stage] || result.stage}`,
+    `质量评分：${result.quality.qualityScore}分`,
+    result.quality.errors.length > 0 ? `错误：${result.quality.errors.join('、')}` : '',
+    result.quality.warnings.length > 0 ? `警告：${result.quality.warnings.join('、')}` : '',
+    `膝盖角度：${Math.round(result.angles.kneeAngle || 0)}度`,
+    `髋部角度：${Math.round(result.angles.hipAngle || 0)}度`,
+  ].filter(Boolean).join('，');
+
+  try {
+    const response = await fetch(DOUBAO_COACH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: stateDesc }],
+      }),
+    });
+
+    if (!response.ok) {
+      await askLegacyCoachCamera(result);
+      return;
+    }
+
+    const data = await response.json() as {
+      messages: Array<{ type: string; content: string; name?: string }>;
+    };
+
+    let audioUrl: string | null = null;
+    let coachText = '';
+
+    for (const msg of data.messages) {
+      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+        audioUrl = msg.content.trim();
+      }
+      if (msg.type === 'ai' && msg.content && !msg.name) {
+        coachText = msg.content.trim();
+      }
+    }
+
+    if (coachText || audioUrl) {
+      const msg: WsMessage<CoachingFeedback> = {
+        type: 'coaching_feedback',
+        payload: {
+          exercise: result.exercise,
+          repCount: result.repCount,
+          stage: result.stage,
+          quality: result.quality.qualityScore >= 85 ? 'good' : result.quality.qualityScore >= 60 ? 'warning' : 'error',
+          effect: result.effect,
+          tips: coachText ? [coachText] : [],
+          encouragement: '',
+        },
+      };
+      broadcastToBrowsers(JSON.stringify(msg));
+
+      if (audioUrl) {
+        const ttsMsg: WsMessage<TTSReadyPayload> = {
+          type: 'tts_ready',
+          payload: { audioUrl, text: coachText },
+        };
+        broadcastToBrowsers(JSON.stringify(ttsMsg));
+      }
+    }
+  } catch (err) {
+    console.error('[ws/camera] 豆包教练异常，降级:', err);
+    await askLegacyCoachCamera(result);
+  }
+}
+
+/** 旧模式降级：LLM 话术 + SDK TTS */
+async function askLegacyCoachCamera(result: AlgorithmResult) {
+  const feedback = await generateCoaching(lastAlgoResult!);
+  const msg: WsMessage<CoachingFeedback> = {
+    type: 'coaching:feedback',
+    payload: feedback,
+  };
+  broadcastToBrowsers(JSON.stringify(msg));
+
+  const ttsText = [...feedback.tips, feedback.encouragement].filter(Boolean).join('。');
+  if (ttsText) {
+    try {
+      const client = await getTTSClient();
+      const ttsResult = await client.synthesize({
+        uid: 'pose-coach-camera',
+        text: ttsText,
+        speaker: 'zh_female_xiaohe_uranus_bigtts',
+      });
+      const ttsMsg: WsMessage<TTSReadyPayload> = {
+        type: 'tts_ready',
+        payload: { audioUrl: ttsResult.audioUri, text: ttsText },
+      };
+      broadcastToBrowsers(JSON.stringify(ttsMsg));
+    } catch (ttsErr) {
+      console.error('[ws/camera] TTS error:', ttsErr);
+    }
+  }
 }
 
 /** 浏览器可设置当前运动类型 */
