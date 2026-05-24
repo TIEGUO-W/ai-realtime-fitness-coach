@@ -156,31 +156,7 @@ export default function PoseCoach() {
     sessionIdRef.current = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }, []);
 
-  // 音频播放解锁：首次用户交互时播放静音音频，解锁浏览器 autoplay policy
-  useEffect(() => {
-    let unlocked = false;
-    const unlock = () => {
-      if (unlocked) return;
-      unlocked = true;
-      const audio = new Audio();
-      audio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAgAAAbAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYgFssGAAAAAAAAAAAAAAAAAAAA//MQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-      audio.play().then(() => {
-        console.log('[TTS] 音频播放已解锁');
-        audio.pause();
-      }).catch(() => {});
-      document.removeEventListener('click', unlock);
-      document.removeEventListener('touchstart', unlock);
-      document.removeEventListener('keydown', unlock);
-    };
-    document.addEventListener('click', unlock, { once: true });
-    document.addEventListener('touchstart', unlock, { once: true });
-    document.addEventListener('keydown', unlock, { once: true });
-    return () => {
-      document.removeEventListener('click', unlock);
-      document.removeEventListener('touchstart', unlock);
-      document.removeEventListener('keydown', unlock);
-    };
-  }, []);
+
 
   // FPS 统计
   const fpsCounterRef = useRef({ count: 0, lastTick: Date.now() });
@@ -227,9 +203,7 @@ export default function PoseCoach() {
 
   // WS 消息处理
   const handleWsMessage = useCallback((msg: WsMessage) => {
-    if (msg.type !== 'algorithm_update' && msg.type !== 'remote:frame' && msg.type !== 'remote:skeleton' && msg.type !== 'pose_frame') {
-      console.log('[WS] 收到消息:', msg.type, msg.payload ? JSON.stringify(msg.payload).substring(0, 100) : '');
-    }
+
     // 远程模式：接收服务端骨架检测的帧
     if (msg.type === 'remote:frame') {
       const payload = msg.payload as RemoteFramePayload;
@@ -328,62 +302,11 @@ export default function PoseCoach() {
 
     // TTS 语音播放
     if (msg.type === 'tts_ready') {
-      const payload = msg.payload as { audioUrl: string; text: string };
-      console.log('[TTS] 收到 tts_ready, audioUrl:', payload.audioUrl?.substring(0, 80), 'text:', payload.text);
-      if (payload.audioUrl) {
-        // 用 fetch + blob 播放，避免跨域 Audio 加载问题
-        fetch(payload.audioUrl)
-          .then(res => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.blob();
-          })
-          .then(blob => {
-            // 停止当前播放
-            if (audioRef.current) {
-              audioRef.current.pause();
-              audioRef.current.removeAttribute('src');
-              audioRef.current.load();
-              const prevAudio = audioRef.current as any;
-              if (prevAudio?._blobUrl) URL.revokeObjectURL(prevAudio._blobUrl);
-              audioRef.current = null;
-            }
-            const blobUrl = URL.createObjectURL(blob);
-            const audio = new Audio(blobUrl);
-            (audio as any)._blobUrl = blobUrl;
-            audio.volume = 1.0;
-            audioRef.current = audio;
-            audio.play().then(() => {
-              console.log('[TTS] blob 播放成功');
-            }).catch((err) => {
-              console.warn('[TTS] blob 播放失败:', err?.name, err?.message);
-              // autoplay policy：等用户交互后重试
-              const retry = () => {
-                audio.play().then(() => console.log('[TTS] 重试播放成功')).catch(e => console.warn('[TTS] 重试失败:', e?.name));
-                document.removeEventListener('click', retry);
-                document.removeEventListener('touchstart', retry);
-                document.removeEventListener('keydown', retry);
-              };
-              document.addEventListener('click', retry, { once: true });
-              document.addEventListener('touchstart', retry, { once: true });
-              document.addEventListener('keydown', retry, { once: true });
-            });
-            // 播放结束后释放 blob URL
-            audio.addEventListener('ended', () => {
-              URL.revokeObjectURL(blobUrl);
-            });
-          })
-          .catch(err => {
-            console.error('[TTS] fetch blob 失败:', err?.message);
-            // 降级：直接用 URL 播放
-            if (audioRef.current) {
-              audioRef.current.pause();
-              audioRef.current = null;
-            }
-            const audio = new Audio(payload.audioUrl);
-            audio.volume = 1.0;
-            audioRef.current = audio;
-            audio.play().catch(e => console.warn('[TTS] 降级播放失败:', e?.name));
-          });
+      const audioUrl = (msg.payload as { audioUrl?: string })?.audioUrl;
+      if (audioUrl) {
+        if (audioRef.current) audioRef.current.pause();
+        audioRef.current = new Audio(audioUrl);
+        audioRef.current.play().catch(() => {});
       }
     }
 
