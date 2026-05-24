@@ -416,8 +416,10 @@ export class PoseAlgorithmEngine {
     if (primaryAngle >= thresholds.up) return 'standing';
     if (primaryAngle <= thresholds.down) return 'bottom';
     if (previousAngle === null) return 'unknown';
-    if (primaryAngle < previousAngle - 4) return 'descending';
-    if (primaryAngle > previousAngle + 4) return 'ascending';
+    // 增大死区到 8°，减少骨架抖动导致的阶段跳变
+    if (primaryAngle < previousAngle - 8) return 'descending';
+    if (primaryAngle > previousAngle + 8) return 'ascending';
+    // 角度变化不大，保持上一阶段（滞回机制防抖动）
     return this.previousStage;
   }
 
@@ -481,29 +483,29 @@ export class PoseAlgorithmEngine {
     if (stage === 'unknown') return false;
 
     // 平板支撑: 持续计时，不算次数
-    if (config === EXERCISE_CONFIGS.plank) {
-      return false;
-    }
+    if (config === EXERCISE_CONFIGS.plank) return false;
 
     if (stage !== this.previousStage) {
       this.stagePath.push(stage);
-      this.stagePath = this.stagePath.slice(-8);
+      this.stagePath = this.stagePath.slice(-12);
     }
 
-    const sequence = config.repSequence;
-    if (sequence.length === 0) return false;
-
-    // 检查是否完成了完整序列
-    // 序列首尾相同（如 standing → ... → standing），需要检测回到起始状态
-    const startStage = sequence[0];
-    const endStage = sequence[sequence.length - 1];
+    // 简化计数：检测"最低点/闭合态 → 起始态"的转换
+    // 只要经过了 bottom/legs_apart/plank_sagging 等极值阶段后回到 up 阶段，就算1次
+    const isBottomStage = ['bottom', 'legs_apart', 'plank_sagging', 'legs_together'].includes(stage);
+    const isUpStage = ['standing', 'up', 'closed', 'legs_together'].includes(stage);
 
     let completed = false;
-    if (stage === endStage && this.previousStage !== endStage) {
-      completed = containsOrderedSequence(this.stagePath, sequence);
-      if (completed) {
+    if (isUpStage && this.previousStage !== stage) {
+      // 检查 stagePath 中是否经过了 bottom 阶段
+      const hasBottom = this.stagePath.some(s =>
+        ['bottom', 'legs_apart', 'plank_sagging', 'bending', 'down'].includes(s)
+      );
+      if (hasBottom) {
         this.repCount += 1;
-        this.stagePath = [endStage];
+        this.stagePath = [stage]; // 重置路径
+        completed = true;
+        console.log(`[pose-algorithm] rep #${this.repCount} detected! stage=${stage}, prev=${this.previousStage}`);
       }
     }
 
