@@ -53,21 +53,8 @@ interface FeedbackEntry {
   feedback: CoachingFeedback;
 }
 
-// ─── 动态加载脚本 ────────────────────────────────
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve();
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = src;
-    script.crossOrigin = 'anonymous';
-    script.onload = () => resolve();
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-}
+// ─── MediaPipe Tasks Vision CDN URL ─────────────
+const MP_VISION_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
 
 export default function PoseCoach() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -100,52 +87,42 @@ export default function PoseCoach() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [modelReady, setModelReady] = useState(false);
 
-  // ─── 模型预热：页面加载后自动下载 MediaPipe，常驻内存 ───
-  const poseWarmRef = useRef<unknown>(null);  // 常驻 Pose 实例
+  // ─── 模型预热：页面加载后自动初始化 MediaPipe，常驻内存 ───
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const poseWarmRef = useRef<any>(null);  // 常驻 PoseLandmarker 实例
   const warmUpRef = useRef(false);
 
   useEffect(() => {
     if (source !== 'local' || warmUpRef.current) return;
     warmUpRef.current = true;
 
-    setLoadStage('预热 MediaPipe 模型...');
+    setLoadStage('加载骨架检测引擎...');
 
     (async () => {
       try {
-        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
-        setLoadStage('加载骨架检测引擎...');
-        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+        // 动态导入 @mediapipe/tasks-vision（浏览器端用 ES module）
+        const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mpPose = (window as any).Pose;
-        if (!mpPose) throw new Error('MediaPipe Pose 加载失败');
+        setLoadStage('初始化 WASM 运行时...');
+        const vision = await FilesetResolver.forVisionTasks(MP_VISION_CDN);
 
-        const pose = new mpPose({
-          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+        setLoadStage('加载本地骨架模型（~3MB）...');
+        poseWarmRef.current = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            // 模型本地托管在 /public/models/，同源秒加载
+            modelAssetPath: '/models/pose_landmarker_lite.task',
+            delegate: 'GPU',
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
         });
 
-        pose.setOptions({
-          modelComplexity: 1,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-
-        // 发送一帧空白图像来触发模型下载（关键：让 WASM + tflite 模型加载到内存）
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 1;
-        tempCanvas.height = 1;
-        setLoadStage('下载骨架检测模型（首次约 5MB）...');
-
-        await pose.send({ image: tempCanvas });
-
-        poseWarmRef.current = pose;
         setModelReady(true);
         setLoadStage('');
       } catch (err) {
         console.error('模型预热失败:', err);
         setLoadStage('模型预热失败，点击开始将重试');
+        warmUpRef.current = false;
       }
     })();
   }, [source]);
@@ -369,99 +346,92 @@ export default function PoseCoach() {
     setIsLoading(true);
     setLoadError('');
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mpCamera = (window as any).Camera;
-      if (!mpCamera) {
-        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
-      }
-
       const video = videoRef.current;
       if (!video) return;
 
-      // 复用常驻 Pose 或创建新实例
-      let pose = poseWarmRef.current;
-      if (!pose) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mpPose = (window as any).Pose;
-        if (!mpPose) throw new Error('MediaPipe 加载失败');
-
-        setLoadStage('下载骨架检测模型...');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pose = new mpPose({
-          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
-        }) as any;
-        (pose as any).setOptions({
-          modelComplexity: 1,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-        poseWarmRef.current = pose;
-        setModelReady(true);
+      // 复用常驻 PoseLandmarker
+      const landmarker = poseWarmRef.current;
+      if (!landmarker) {
+        setLoadError('模型未就绪，请稍候重试');
+        return;
       }
 
-      // 设置回调
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (pose as any).onResults((results: { poseLandmarks: Array<{ x: number; y: number; z: number; visibility: number }> | null; image: HTMLVideoElement }) => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext('2d');
-        if (!canvas || !ctx || !video) return;
-
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-
-        ctx.save();
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-        ctx.restore();
-
-        if (results.poseLandmarks) {
-          setPoseDetected(true);
-          const mirroredLandmarks = results.poseLandmarks.map(lm => ({
-            x: 1 - lm.x,
-            y: lm.y,
-            z: lm.z,
-            visibility: lm.visibility,
-          }));
-          drawSkeleton(ctx, mirroredLandmarks, canvas.width, canvas.height, quality);
-
-          const frame: Landmark[] = results.poseLandmarks.map(lm => ({
-            x: lm.x,
-            y: lm.y,
-            z: lm.z,
-            visibility: lm.visibility,
-          }));
-          frameBufferRef.current.push(frame);
-          if (frameBufferRef.current.length > 30) {
-            frameBufferRef.current = frameBufferRef.current.slice(-30);
-          }
-        } else {
-          setPoseDetected(false);
-        }
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mpCam = (window as any).Camera;
-      const camera = new mpCam(video, {
-        onFrame: async () => {
-          await (pose as any).send({ image: video });
+      // 打开摄像头
+      const constraints: MediaStreamConstraints = {
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         },
-        width: 640,
-        height: 480,
-        ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
-      });
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      await video.play();
 
-      await camera.start();
-      poseInstanceRef.current = pose;
-      cameraRef.current = camera;
+      poseInstanceRef.current = landmarker;
       setIsRunning(true);
       setRepCount(0);
       setFeedbackHistory([]);
       setCurrentFeedback(null);
       setLoadStage('');
+
+      // 帧循环：requestAnimationFrame + detectForVideo
+      let lastTime = -1;
+      const processFrame = () => {
+        if (!videoRef.current || videoRef.current.paused) return;
+        const now = performance.now();
+        if (now === lastTime) {
+          requestAnimationFrame(processFrame);
+          return;
+        }
+
+        const result = landmarker.detectForVideo(video, now);
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (canvas && ctx) {
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+
+          ctx.save();
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+
+          if (result.landmarks && result.landmarks.length > 0) {
+            setPoseDetected(true);
+            const lm = result.landmarks[0];
+            const mirroredLandmarks = lm.map((p: { x: number; y: number; z: number; visibility?: number }) => ({
+              x: 1 - p.x,
+              y: p.y,
+              z: p.z,
+              visibility: p.visibility ?? 0,
+            }));
+            drawSkeleton(ctx, mirroredLandmarks, canvas.width, canvas.height, quality);
+
+            const frame: Landmark[] = lm.map((p: { x: number; y: number; z: number; visibility?: number }) => ({
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              visibility: p.visibility ?? 0,
+            }));
+            frameBufferRef.current.push(frame);
+            if (frameBufferRef.current.length > 30) {
+              frameBufferRef.current = frameBufferRef.current.slice(-30);
+            }
+          } else {
+            setPoseDetected(false);
+          }
+        }
+
+        lastTime = now;
+        requestAnimationFrame(processFrame);
+      };
+      requestAnimationFrame(processFrame);
+
+      // 保存摄像头流以便停止时关闭
+      cameraRef.current = stream;
     } catch (err) {
       console.error('启动失败:', err);
       setLoadError(err instanceof Error ? err.message : '未知错误');
@@ -489,12 +459,17 @@ export default function PoseCoach() {
   }, [source, handleStartLocal, handleStartRemote]);
 
   const handleStop = useCallback(() => {
-    // 只停止摄像头，Pose 实例常驻内存，下次启动秒开
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cam = cameraRef.current as any;
-    if (cam?.stop) cam.stop();
+    // 只停止摄像头流，PoseLandmarker 实例常驻内存，下次启动秒开
+    const stream = cameraRef.current as MediaStream | null;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
     cameraRef.current = null;
-    poseInstanceRef.current = null; // 清除引用但不销毁 poseWarmRef 中的常驻实例
+    poseInstanceRef.current = null;
+    // 清除 canvas
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     setIsRunning(false);
     setPoseDetected(false);
     frameBufferRef.current = [];

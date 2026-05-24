@@ -18,8 +18,8 @@ async function ensureInit() {
     );
     poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+        // 模型文件本地托管在 /public/models/，同源访问无跨域延迟
+        modelAssetPath: '/models/pose_landmarker_lite.task',
         delegate: 'CPU',
       },
       runningMode: 'IMAGE',
