@@ -1,11 +1,20 @@
-import type { Metadata } from 'next';
-import PoseCoach from '@/components/PoseCoach';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'AI 运动教练 | 实时姿态分析',
-  description: '基于云端推理的实时运动教练 — 边缘骨架检测 + LLM 智能分析 + TTS 语音指导',
-};
+import dynamic from 'next/dynamic';
+
+// Dynamic import to avoid SSR issues with Spline and browser APIs
+const Dashboard = dynamic(() => import('@/components/dashboard/Dashboard'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-screen w-screen bg-[#0a0e17] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+        <span className="text-cyan-400/60 text-sm font-mono tracking-widest">LOADING</span>
+      </div>
+    </div>
+  ),
+});
 
 export default function Home() {
-  return <PoseCoach />;
+  return <Dashboard />;
 }
