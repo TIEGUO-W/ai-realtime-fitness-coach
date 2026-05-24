@@ -184,9 +184,15 @@ export default function PoseCoach() {
       const data = await res.json();
       const audioUrl: string | undefined = data.audioUrl;
       if (audioUrl) {
-        if (audioRef.current) audioRef.current.pause();
-        audioRef.current = new Audio(audioUrl);
-        audioRef.current.play().catch(() => {});
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.src = '';
+        }
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+        audio.play().catch((err) => {
+          console.warn('[TTS] speakText 播放失败:', err?.name || err);
+        });
       }
     } catch {
       // TTS 失败静默处理
@@ -295,9 +301,23 @@ export default function PoseCoach() {
     if (msg.type === 'tts_ready') {
       const payload = msg.payload as { audioUrl: string; text: string };
       if (payload.audioUrl) {
-        if (audioRef.current) audioRef.current.pause();
-        audioRef.current = new Audio(payload.audioUrl);
-        audioRef.current.play().catch(() => {});
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.src = '';
+        }
+        const audio = new Audio(payload.audioUrl);
+        audioRef.current = audio;
+        audio.play().catch((err) => {
+          console.warn('[TTS] 播放失败（可能需要用户交互）:', err?.name || err);
+          // 浏览器 autoplay policy：等用户交互后重试
+          const retryOnInteraction = () => {
+            audio.play().catch(() => {});
+            document.removeEventListener('click', retryOnInteraction);
+            document.removeEventListener('touchstart', retryOnInteraction);
+          };
+          document.addEventListener('click', retryOnInteraction, { once: true });
+          document.addEventListener('touchstart', retryOnInteraction, { once: true });
+        });
       }
     }
 
@@ -317,9 +337,15 @@ export default function PoseCoach() {
     if (msg.type === 'voice_reply_tts') {
       const payload = msg.payload as { audioUrl: string; text: string };
       if (payload.audioUrl) {
-        if (audioRef.current) audioRef.current.pause();
-        audioRef.current = new Audio(payload.audioUrl);
-        audioRef.current.play().catch(() => {});
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.src = '';
+        }
+        const audio = new Audio(payload.audioUrl);
+        audioRef.current = audio;
+        audio.play().catch((err) => {
+          console.warn('[TTS] 播放失败:', err?.name || err);
+        });
       }
     }
 

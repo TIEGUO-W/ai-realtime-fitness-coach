@@ -591,7 +591,7 @@ export class PoseAlgorithmEngine {
 
     // 简化计数：回到"上"阶段 且 之前经过"下"阶段 = 完成一次
     const isUpStage = (s: ExerciseStage) =>
-      s === 'standing' || s === 'up' || s === 'closed' || s === 'neutral';
+      s === 'standing' || s === 'ascending' || s === 'up' || s === 'closed' || s === 'neutral';
     const isDownStage = (s: ExerciseStage) =>
       s === 'descending' || s === 'bottom' || s === 'open' ||
       s === 'left_knee_up' || s === 'right_knee_up';

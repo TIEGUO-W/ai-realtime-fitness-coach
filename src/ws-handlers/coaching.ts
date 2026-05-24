@@ -337,12 +337,14 @@ export function handleCoachingConnection(ws: WebSocket): void {
  */
 async function synthQuick(text: string): Promise<string | null> {
   try {
+    console.log('[coaching] synthQuick 开始:', text.substring(0, 30));
     const client = getTTSClient();
     const result = await client.synthesize({
       uid: 'pose-coach-quick',
       text,
       speaker: 'zh_female_xiaohe_uranus_bigtts',
     });
+    console.log('[coaching] synthQuick 成功, audioUri:', result.audioUri?.substring(0, 80));
     return result.audioUri;
   } catch (err) {
     console.error('[coaching] 快速TTS失败:', err);
