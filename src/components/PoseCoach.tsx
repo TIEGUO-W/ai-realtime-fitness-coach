@@ -94,9 +94,61 @@ export default function PoseCoach() {
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
   const [poseDetected, setPoseDetected] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [loadStage, setLoadStage] = useState('');
   const [remoteFps, setRemoteFps] = useState(0);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [modelReady, setModelReady] = useState(false);
+
+  // ─── 模型预热：页面加载后自动下载 MediaPipe，常驻内存 ───
+  const poseWarmRef = useRef<unknown>(null);  // 常驻 Pose 实例
+  const warmUpRef = useRef(false);
+
+  useEffect(() => {
+    if (source !== 'local' || warmUpRef.current) return;
+    warmUpRef.current = true;
+
+    setLoadStage('预热 MediaPipe 模型...');
+
+    (async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
+        setLoadStage('加载骨架检测引擎...');
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mpPose = (window as any).Pose;
+        if (!mpPose) throw new Error('MediaPipe Pose 加载失败');
+
+        const pose = new mpPose({
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+        });
+
+        pose.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+
+        // 发送一帧空白图像来触发模型下载（关键：让 WASM + tflite 模型加载到内存）
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 1;
+        tempCanvas.height = 1;
+        setLoadStage('下载骨架检测模型（首次约 5MB）...');
+
+        await pose.send({ image: tempCanvas });
+
+        poseWarmRef.current = pose;
+        setModelReady(true);
+        setLoadStage('');
+      } catch (err) {
+        console.error('模型预热失败:', err);
+        setLoadStage('模型预热失败，点击开始将重试');
+      }
+    })();
+  }, [source]);
 
   // 枚举摄像头设备
   useEffect(() => {
@@ -312,39 +364,46 @@ export default function PoseCoach() {
     ctx.shadowBlur = 0;
   }, []);
 
-  // 本地模式启动
+  // 本地模式启动（复用常驻 Pose 实例）
   const handleStartLocal = useCallback(async () => {
     setIsLoading(true);
     setLoadError('');
     try {
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mpPose = (window as any).Pose;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mpCamera = (window as any).Camera;
-
-      if (!mpPose || !mpCamera) {
-        throw new Error('MediaPipe 加载失败');
+      if (!mpCamera) {
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
       }
 
       const video = videoRef.current;
       if (!video) return;
 
-      const pose = new mpPose({
-        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
-      });
+      // 复用常驻 Pose 或创建新实例
+      let pose = poseWarmRef.current;
+      if (!pose) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mpPose = (window as any).Pose;
+        if (!mpPose) throw new Error('MediaPipe 加载失败');
 
-      pose.setOptions({
-        modelComplexity: 1,
-        smoothLandmarks: true,
-        enableSegmentation: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+        setLoadStage('下载骨架检测模型...');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pose = new mpPose({
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+        }) as any;
+        (pose as any).setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        poseWarmRef.current = pose;
+        setModelReady(true);
+      }
 
-      pose.onResults((results: { poseLandmarks: Array<{ x: number; y: number; z: number; visibility: number }> | null; image: HTMLVideoElement }) => {
+      // 设置回调
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pose as any).onResults((results: { poseLandmarks: Array<{ x: number; y: number; z: number; visibility: number }> | null; image: HTMLVideoElement }) => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx || !video) return;
@@ -384,9 +443,11 @@ export default function PoseCoach() {
         }
       });
 
-      const camera = new mpCamera(video, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mpCam = (window as any).Camera;
+      const camera = new mpCam(video, {
         onFrame: async () => {
-          await pose.send({ image: video });
+          await (pose as any).send({ image: video });
         },
         width: 640,
         height: 480,
@@ -400,9 +461,11 @@ export default function PoseCoach() {
       setRepCount(0);
       setFeedbackHistory([]);
       setCurrentFeedback(null);
+      setLoadStage('');
     } catch (err) {
       console.error('启动失败:', err);
       setLoadError(err instanceof Error ? err.message : '未知错误');
+      setLoadStage('');
     } finally {
       setIsLoading(false);
     }
@@ -426,14 +489,12 @@ export default function PoseCoach() {
   }, [source, handleStartLocal, handleStartRemote]);
 
   const handleStop = useCallback(() => {
+    // 只停止摄像头，Pose 实例常驻内存，下次启动秒开
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cam = cameraRef.current as any;
     if (cam?.stop) cam.stop();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pose = poseInstanceRef.current as any;
-    if (pose?.close) pose.close();
     cameraRef.current = null;
-    poseInstanceRef.current = null;
+    poseInstanceRef.current = null; // 清除引用但不销毁 poseWarmRef 中的常驻实例
     setIsRunning(false);
     setPoseDetected(false);
     frameBufferRef.current = [];
@@ -466,18 +527,48 @@ export default function PoseCoach() {
               <div className="text-6xl opacity-20">
                 {source === 'local' ? '🏃' : '📡'}
               </div>
-              <p className="text-[#8B8FA3] text-sm">
-                {isLoading ? '正在初始化...' : source === 'local' ? '点击下方按钮开始训练' : '等待树莓派视频流...'}
-              </p>
+              {source === 'local' && loadStage ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-[#FF6B35] border-t-transparent" />
+                    <p className="text-[#FF6B35] text-sm">{loadStage}</p>
+                  </div>
+                  {loadStage.includes('模型') && (
+                    <p className="text-[#8B8FA3]/50 text-xs">首次加载需下载 ~5MB 模型文件，后续常驻内存</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-[#8B8FA3] text-sm">
+                  {isLoading ? '正在初始化...' : source === 'local' ? (modelReady ? '模型已就绪，点击开始训练' : '等待模型加载...') : '等待树莓派视频流...'}
+                </p>
+              )}
               {source === 'remote' && !rpiConnected && (
                 <p className="text-[#FF4757]/70 text-xs">树莓派未连接 — 请先运行 rpi_client.py</p>
               )}
               {loadError && <p className="text-[#FF4757] text-xs">{loadError}</p>}
+              {source === 'local' && modelReady && !isRunning && !isLoading && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-[#22D3A7]/70">
+                  <span className="inline-block h-2 w-2 rounded-full bg-[#22D3A7]" />
+                  骨架检测模型已常驻内存
+                </div>
+              )}
             </div>
           )}
 
           {/* 状态指示 */}
           <div className="absolute left-4 top-4 flex items-center gap-2">
+            {source === 'local' && !modelReady && loadStage && (
+              <Badge variant="outline" className="border-[#FF6B35]/40 text-[#FF6B35] text-xs animate-pulse">
+                <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#FF6B35]" />
+                {loadStage.includes('模型') ? '下载模型中' : '加载中'}
+              </Badge>
+            )}
+            {source === 'local' && modelReady && !isRunning && (
+              <Badge variant="outline" className="border-[#22D3A7]/40 text-[#22D3A7] text-xs">
+                <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#22D3A7]" />
+                模型就绪
+              </Badge>
+            )}
             <Badge variant="outline" className={`text-xs ${wsConnected ? 'border-[#22D3A7]/40 text-[#22D3A7]' : 'border-[#FF4757]/40 text-[#FF4757]'}`}>
               <span className={`mr-1 inline-block h-2 w-2 rounded-full ${wsConnected ? 'bg-[#22D3A7]' : 'bg-[#FF4757]'} animate-pulse`} />
               云端
@@ -589,12 +680,12 @@ export default function PoseCoach() {
 
           <Button
             onClick={isRunning ? handleStop : handleStart}
-            disabled={isLoading || (source === 'remote' && !rpiConnected && !isRunning)}
+            disabled={isLoading || (source === 'local' && !modelReady) || (source === 'remote' && !rpiConnected && !isRunning)}
             className={isRunning
               ? 'bg-[#FF4757] hover:bg-[#FF4757]/80 text-white'
               : 'bg-[#FF6B35] hover:bg-[#FF6B35]/80 text-white'}
           >
-            {isLoading ? '初始化中...' : isRunning ? '停止训练' : source === 'local' ? '开始训练' : '开始接收'}
+            {isLoading ? (loadStage || '初始化中...') : isRunning ? '停止训练' : source === 'local' ? (modelReady ? '开始训练' : '加载模型...') : '开始接收'}
           </Button>
 
           <Separator orientation="vertical" className="h-6 bg-[#1A1D27]" />
