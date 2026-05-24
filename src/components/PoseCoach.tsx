@@ -554,25 +554,80 @@ export default function PoseCoach() {
     setSource(newSource);
   }, [isRunning, handleStop]);
 
-  // ===== 语音交互 =====
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // ===== 语音交互（开关模式 + Web Speech API 持续监听）=====
+  const recognitionRef = useRef<any>(null);
 
-  const startRecording = useCallback(async () => {
+  const toggleVoiceMode = useCallback(() => {
+    if (isRecording) {
+      // 关闭语音模式
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      }
+      setIsRecording(false);
+      return;
+    }
+
+    // 开启语音模式
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.error('浏览器不支持 Web Speech API，请使用 Chrome');
+      // 降级：用 MediaRecorder + 后端 ASR
+      startRecordingFallback();
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = (event: any) => {
+      const last = event.results[event.results.length - 1];
+      if (last.isFinal) {
+        const text = last[0].transcript.trim();
+        if (text && wsRef.current) {
+          wsRef.current.send({
+            type: 'voice_command',
+            payload: { text },
+          });
+        }
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('语音识别错误:', event.error);
+      if (event.error === 'not-allowed') {
+        setIsRecording(false);
+      }
+    };
+
+    recognition.onend = () => {
+      // 持续模式：如果还在录音状态，自动重启
+      if (isRecording && recognitionRef.current) {
+        try { recognition.start(); } catch (_) { /* 忽略重复启动 */ }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsRecording(true);
+  }, [isRecording]);
+
+  // 降级方案：MediaRecorder + 后端 ASR
+  const startRecordingFallback = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      audioChunksRef.current = [];
+      const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) chunks.push(e.data);
       };
 
       recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-
-        // 转 base64 发送到后端 ASR
+        const blob = new Blob(chunks, { type: 'audio/webm' });
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = (reader.result as string).split(',')[1];
@@ -588,17 +643,14 @@ export default function PoseCoach() {
       };
 
       recorder.start();
-      mediaRecorderRef.current = recorder;
       setIsRecording(true);
+      // 3秒自动发送
+      setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop();
+      }, 3000);
     } catch (err) {
       console.error('麦克风访问失败:', err);
       setIsRecording(false);
-    }
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
     }
   }, []);
 
@@ -963,22 +1015,19 @@ export default function PoseCoach() {
               ))
             )}
           </div>
-          {/* 麦克风按钮 */}
+          {/* 语音开关 */}
           <button
-            onMouseDown={startRecording}
-            onMouseUp={stopRecording}
-            onTouchStart={startRecording}
-            onTouchEnd={stopRecording}
+            onClick={toggleVoiceMode}
             className={`w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-all ${
               isRecording
-                ? 'bg-[#FF4757] text-white shadow-[0_0_20px_rgba(255,71,87,0.4)] scale-105'
+                ? 'bg-[#FF6B35] text-white shadow-[0_0_20px_rgba(255,107,53,0.4)]'
                 : 'bg-[#1A1D27] text-[#8B8FA3] hover:bg-[#252836] hover:text-[#E8E9ED]'
             }`}
           >
             <span className={`text-base ${isRecording ? 'animate-pulse' : ''}`}>
-              {isRecording ? '🔴' : '🎤'}
+              {isRecording ? '🟠' : '🎤'}
             </span>
-            {isRecording ? '松开结束...' : '按住说话'}
+            {isRecording ? '语音监听中（点击关闭）' : '语音控制（点击开启）'}
           </button>
         </div>
 
