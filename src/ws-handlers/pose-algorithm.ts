@@ -3,6 +3,7 @@
  * 参考: serene-WJ/AI- algorithm_service.py
  * 
  * 核心思路: 规则算法毫秒级实时处理，LLM 只负责话术生成
+ * 支持7种运动: 深蹲/硬拉/俯卧撑/弓步蹲/平板支撑/高抬腿/开合跳
  */
 
 import type { Landmark } from '../lib/ws-client';
@@ -22,6 +23,9 @@ export interface JointAngles {
   hipAngle: number | null;
   trunkAngle: number | null;
   trunkForwardLean: number | null;
+  elbowAngle: number | null;
+  shoulderAngle: number | null;
+  ankleAngle: number | null;
 }
 
 export interface PoseCleaningResult {
@@ -39,9 +43,10 @@ export interface QualityAssessment {
   warnings: string[];
 }
 
-export type ExerciseStage = 'standing' | 'descending' | 'bottom' | 'ascending' | 'unknown';
+export type ExerciseStage = 'standing' | 'descending' | 'bottom' | 'ascending' | 'unknown'
+  | 'arms_up' | 'arms_down' | 'legs_together' | 'legs_apart' | 'plank_hold' | 'plank_sagging';
 
-export type FrontendEffect = 'perfect' | 'excellent' | 'good' | null;
+export type FrontendEffect = 'perfect' | 'excellent' | 'good' | 'adjust' | 'warning' | null;
 
 export interface AlgorithmResult {
   exercise: string;
@@ -54,14 +59,82 @@ export interface AlgorithmResult {
   algorithmContext: string;
 }
 
+// ─── 运动类型定义 ──────────────────────────────
+
+type ExerciseType = 'squat' | 'deadlift' | 'pushup' | 'lunge' | 'plank' | 'high_knees' | 'jumping_jack';
+
+interface ExerciseConfig {
+  name: string;
+  primaryAngle: keyof JointAngles;
+  /** 主要角度的阈值：从哪个阶段到哪个阶段 */
+  thresholds: { up: number; down: number };
+  /** 完整动作需要的状态序列 */
+  repSequence: ExerciseStage[];
+  /** 质量检查项 */
+  qualityChecks: string[];
+}
+
+const EXERCISE_CONFIGS: Record<ExerciseType, ExerciseConfig> = {
+  squat: {
+    name: '深蹲',
+    primaryAngle: 'kneeAngle',
+    thresholds: { up: 160, down: 110 },
+    repSequence: ['standing', 'descending', 'bottom', 'ascending', 'standing'],
+    qualityChecks: ['knee_inward', 'insufficient_depth', 'back_leaning_forward', 'too_fast', 'left_right_unbalanced'],
+  },
+  deadlift: {
+    name: '硬拉',
+    primaryAngle: 'hipAngle',
+    thresholds: { up: 170, down: 90 },
+    repSequence: ['standing', 'descending', 'bottom', 'ascending', 'standing'],
+    qualityChecks: ['back_rounding', 'bar_distance', 'too_fast', 'left_right_unbalanced'],
+  },
+  pushup: {
+    name: '俯卧撑',
+    primaryAngle: 'elbowAngle',
+    thresholds: { up: 160, down: 90 },
+    repSequence: ['standing', 'descending', 'bottom', 'ascending', 'standing'],
+    qualityChecks: ['body_not_straight', 'insufficient_depth', 'too_fast', 'left_right_unbalanced'],
+  },
+  lunge: {
+    name: '弓步蹲',
+    primaryAngle: 'kneeAngle',
+    thresholds: { up: 160, down: 95 },
+    repSequence: ['standing', 'descending', 'bottom', 'ascending', 'standing'],
+    qualityChecks: ['knee_over_toe', 'back_leaning_forward', 'too_fast', 'left_right_unbalanced'],
+  },
+  plank: {
+    name: '平板支撑',
+    primaryAngle: 'trunkForwardLean',
+    thresholds: { up: 20, down: 0 },
+    repSequence: [],
+    qualityChecks: ['body_not_straight', 'hip_sagging', 'left_right_unbalanced'],
+  },
+  high_knees: {
+    name: '高抬腿',
+    primaryAngle: 'hipAngle',
+    thresholds: { up: 150, down: 90 },
+    repSequence: ['standing', 'descending', 'bottom', 'ascending', 'standing'],
+    qualityChecks: ['insufficient_height', 'too_fast', 'left_right_unbalanced'],
+  },
+  jumping_jack: {
+    name: '开合跳',
+    primaryAngle: 'shoulderAngle',
+    thresholds: { up: 140, down: 40 },
+    repSequence: ['legs_together', 'legs_apart', 'legs_together'],
+    qualityChecks: ['insufficient_arm_raise', 'too_fast', 'left_right_unbalanced'],
+  },
+};
+
 // ─── 常量 ──────────────────────────────────────
 
 const LOW_CONFIDENCE_THRESHOLD = 0.3;
 const SMOOTHING_ALPHA = 0.45;
 const SIDE_JOINTS = ['shoulder', 'hip', 'knee', 'ankle'] as const;
 
-// MediaPipe Pose 33 关键点 → 命名映射
+// MediaPipe Pose 33 关键点 → 命名映射（扩展版）
 const JOINT_MAP: Record<number, string> = {
+  0: 'nose',
   11: 'left_shoulder',
   12: 'right_shoulder',
   13: 'left_elbow',
@@ -80,28 +153,35 @@ const JOINT_MAP: Record<number, string> = {
 
 export class PoseAlgorithmEngine {
   private previousKeypoints: Record<string, CleanedKeypoint> = {};
-  private previousKneeAngle: number | null = null;
-  private lastKneeAngleDelta: number | null = null;
+  private previousPrimaryAngle: number | null = null;
+  private lastAngleDelta: number | null = null;
   private previousStage: ExerciseStage = 'unknown';
   private stagePath: ExerciseStage[] = [];
   private repCount = 0;
+  private plankHoldStart: number | null = null;
+  private plankHoldSeconds = 0;
+  private jumpingJackState: 'together' | 'apart' = 'together';
 
   reset(): void {
     this.previousKeypoints = {};
-    this.previousKneeAngle = null;
-    this.lastKneeAngleDelta = null;
+    this.previousPrimaryAngle = null;
+    this.lastAngleDelta = null;
     this.previousStage = 'unknown';
     this.stagePath = [];
     this.repCount = 0;
+    this.plankHoldStart = null;
+    this.plankHoldSeconds = 0;
+    this.jumpingJackState = 'together';
   }
 
   analyze(landmarks: Landmark[], exercise: string): AlgorithmResult {
+    const config = EXERCISE_CONFIGS[exercise as ExerciseType] ?? EXERCISE_CONFIGS.squat;
     const rawKeypoints = this.landmarksToNamedKeypoints(landmarks);
     const cleaning = this.cleanPose(rawKeypoints);
     const angles = this.calculateAngles(cleaning);
-    const stage = this.recognizeSquatStage(angles.kneeAngle);
-    const completedRep = this.updateCounter(stage);
-    const quality = this.scoreQuality(cleaning, angles, stage);
+    const stage = this.recognizeStage(angles, config);
+    const completedRep = this.updateCounter(stage, config);
+    const quality = this.scoreQuality(cleaning, angles, stage, config);
     const effect = this.computeEffect(quality, completedRep);
     const algorithmContext = this.buildAlgorithmContext(
       exercise, stage, completedRep, cleaning, angles, quality,
@@ -270,59 +350,160 @@ export class PoseAlgorithmEngine {
     return scores.left >= scores.right ? 'left' : 'right';
   }
 
-  // 关节角度计算
+  // ─── 角度计算（全运动支持） ──────────────────
+
   private calculateAngles(cleaning: PoseCleaningResult): JointAngles {
     const side = cleaning.selectedSide;
-    if (side === 'unknown') return { kneeAngle: null, hipAngle: null, trunkAngle: null, trunkForwardLean: null };
+    if (side === 'unknown') {
+      return {
+        kneeAngle: null, hipAngle: null, trunkAngle: null,
+        trunkForwardLean: null, elbowAngle: null, shoulderAngle: null, ankleAngle: null,
+      };
+    }
 
     const kp = cleaning.keypoints;
     const shoulder = kp[`${side}_shoulder`];
     const hip = kp[`${side}_hip`];
     const knee = kp[`${side}_knee`];
     const ankle = kp[`${side}_ankle`];
+    const elbow = kp[`${side}_elbow`];
+    const wrist = kp[`${side}_wrist`];
+    const otherShoulder = kp[side === 'left' ? 'right_shoulder' : 'left_shoulder'];
+    const otherHip = kp[side === 'left' ? 'right_hip' : 'right_hip'];
 
     return {
       kneeAngle: roundOptional(angle(hip, knee, ankle)),
       hipAngle: roundOptional(angle(shoulder, hip, knee)),
       trunkAngle: roundOptional(angle(shoulder, hip, ankle)),
       trunkForwardLean: roundOptional(trunkForwardLean(shoulder, hip)),
+      elbowAngle: roundOptional(angle(shoulder, elbow, wrist)),
+      shoulderAngle: roundOptional(angle(otherHip, shoulder, elbow)),
+      ankleAngle: roundOptional(angle(knee, ankle, { 
+        x: ankle.x, y: ankle.y + 0.1, confidence: 1, valid: true, interpolated: false 
+      })),
     };
   }
 
-  // 深蹲阶段识别（状态机）
-  private recognizeSquatStage(kneeAngle: number | null): ExerciseStage {
-    if (kneeAngle === null) return 'unknown';
+  // ─── 多运动阶段识别 ──────────────────────────
 
-    const previousAngle = this.previousKneeAngle;
-    this.lastKneeAngleDelta =
-      previousAngle !== null ? Math.abs(kneeAngle - previousAngle) : null;
-    this.previousKneeAngle = kneeAngle;
+  private recognizeStage(angles: JointAngles, config: ExerciseConfig): ExerciseStage {
+    const primaryAngle = angles[config.primaryAngle];
 
-    if (kneeAngle >= 160) return 'standing';
-    if (kneeAngle <= 105) return 'bottom';
+    if (config.repSequence.length === 0) {
+      // 无状态序列的运动（如平板支撑）— 用独立逻辑
+      return this.recognizePlankStage(angles);
+    }
+
+    // 开合跳特殊逻辑
+    if (config === EXERCISE_CONFIGS.jumping_jack) {
+      return this.recognizeJumpingJackStage(angles);
+    }
+
+    // 通用角度状态机（深蹲/硬拉/俯卧撑/弓步蹲/高抬腿）
+    return this.recognizeGenericStage(primaryAngle, config.thresholds);
+  }
+
+  private recognizeGenericStage(
+    primaryAngle: number | null,
+    thresholds: { up: number; down: number },
+  ): ExerciseStage {
+    if (primaryAngle === null) return 'unknown';
+
+    const previousAngle = this.previousPrimaryAngle;
+    this.lastAngleDelta = previousAngle !== null ? Math.abs(primaryAngle - previousAngle) : null;
+    this.previousPrimaryAngle = primaryAngle;
+
+    if (primaryAngle >= thresholds.up) return 'standing';
+    if (primaryAngle <= thresholds.down) return 'bottom';
     if (previousAngle === null) return 'unknown';
-    if (kneeAngle < previousAngle - 4) return 'descending';
-    if (kneeAngle > previousAngle + 4) return 'ascending';
+    if (primaryAngle < previousAngle - 4) return 'descending';
+    if (primaryAngle > previousAngle + 4) return 'ascending';
     return this.previousStage;
   }
 
-  // 状态机计数: standing → descending → bottom → ascending → standing = 1 rep
-  private updateCounter(stage: ExerciseStage): boolean {
+  private recognizePlankStage(angles: JointAngles): ExerciseStage {
+    // 平板支撑: 用躯干前倾角 + 髋角判断
+    const { trunkForwardLean, hipAngle } = angles;
+
+    if (trunkForwardLean === null) return 'unknown';
+
+    // 正常平板: 躯干近乎水平(前倾角 < 25°), 髋角 ~180°
+    if (trunkForwardLean < 25 && (hipAngle === null || hipAngle > 150)) {
+      if (this.plankHoldStart === null) {
+        this.plankHoldStart = Date.now();
+      }
+      this.plankHoldSeconds = (Date.now() - this.plankHoldStart) / 1000;
+      return 'plank_hold';
+    }
+
+    // 塌腰: 躯干前倾变大或髋角变小
+    if (trunkForwardLean > 30 || (hipAngle !== null && hipAngle < 140)) {
+      this.plankHoldStart = null;
+      return 'plank_sagging';
+    }
+
+    return this.previousStage === 'unknown' ? 'plank_hold' : this.previousStage;
+  }
+
+  private recognizeJumpingJackStage(angles: JointAngles): ExerciseStage {
+    // 开合跳: 用肩角 + 两脚踝距离判断
+    const { shoulderAngle } = angles;
+    const kp = this.previousKeypoints;
+    const leftAnkle = kp.left_ankle;
+    const rightAnkle = kp.right_ankle;
+
+    if (shoulderAngle === null) return 'unknown';
+
+    const armsUp = shoulderAngle > 100;
+    let legsApart = false;
+    if (isValid(leftAnkle) && isValid(rightAnkle)) {
+      legsApart = Math.abs(leftAnkle.x - rightAnkle.x) > 0.25;
+    }
+
+    if (armsUp && legsApart) {
+      this.jumpingJackState = 'apart';
+      return 'legs_apart';
+    }
+    if (!armsUp && !legsApart) {
+      if (this.jumpingJackState === 'apart') {
+        this.jumpingJackState = 'together';
+        return 'legs_together';
+      }
+      return 'legs_together';
+    }
+
+    return this.previousStage;
+  }
+
+  // ─── 状态机计数 ─────────────────────────────
+
+  private updateCounter(stage: ExerciseStage, config: ExerciseConfig): boolean {
     if (stage === 'unknown') return false;
+
+    // 平板支撑: 持续计时，不算次数
+    if (config === EXERCISE_CONFIGS.plank) {
+      return false;
+    }
 
     if (stage !== this.previousStage) {
       this.stagePath.push(stage);
-      this.stagePath = this.stagePath.slice(-6);
+      this.stagePath = this.stagePath.slice(-8);
     }
 
+    const sequence = config.repSequence;
+    if (sequence.length === 0) return false;
+
+    // 检查是否完成了完整序列
+    // 序列首尾相同（如 standing → ... → standing），需要检测回到起始状态
+    const startStage = sequence[0];
+    const endStage = sequence[sequence.length - 1];
+
     let completed = false;
-    if (stage === 'standing' && this.previousStage === 'ascending') {
-      completed = containsOrderedSequence(this.stagePath, [
-        'standing', 'descending', 'bottom', 'ascending', 'standing',
-      ]);
+    if (stage === endStage && this.previousStage !== endStage) {
+      completed = containsOrderedSequence(this.stagePath, sequence);
       if (completed) {
         this.repCount += 1;
-        this.stagePath = ['standing'];
+        this.stagePath = [endStage];
       }
     }
 
@@ -330,48 +511,28 @@ export class PoseAlgorithmEngine {
     return completed;
   }
 
-  // 质量评分
+  // ─── 质量评分（多运动） ──────────────────────
+
   private scoreQuality(
     cleaning: PoseCleaningResult,
     angles: JointAngles,
     stage: ExerciseStage,
+    config: ExerciseConfig,
   ): QualityAssessment {
     let score = 100;
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // 膝盖内扣
-    if (this.hasKneeInward(cleaning)) {
-      score -= 20;
-      errors.push('knee_inward');
-    }
-
-    // 深蹲深度不足
-    const shallowTurnaround =
-      stage === 'ascending' &&
-      this.stagePath.includes('descending') &&
-      !this.stagePath.includes('bottom');
-    if (shallowTurnaround) {
-      score -= 15;
-      errors.push('insufficient_depth');
-    }
-
-    // 身体前倾
-    if (angles.trunkForwardLean !== null && angles.trunkForwardLean > 35) {
-      score -= 15;
-      errors.push('back_leaning_forward');
-    }
-
-    // 动作过快
-    if (this.isTooFast(angles.kneeAngle)) {
-      score -= 10;
-      warnings.push('movement_too_fast');
-    }
-
-    // 左右不平衡
-    if (this.isLeftRightUnbalanced(cleaning)) {
-      score -= 10;
-      warnings.push('left_right_unbalanced');
+    for (const check of config.qualityChecks) {
+      const result = this.runQualityCheck(check, cleaning, angles, stage);
+      if (result.penalty > 0) {
+        score -= result.penalty;
+        if (result.severity === 'error') {
+          errors.push(check);
+        } else {
+          warnings.push(check);
+        }
+      }
     }
 
     // 关键点置信度过低
@@ -387,6 +548,95 @@ export class PoseAlgorithmEngine {
     };
   }
 
+  private runQualityCheck(
+    check: string,
+    cleaning: PoseCleaningResult,
+    angles: JointAngles,
+    stage: ExerciseStage,
+  ): { penalty: number; severity: 'error' | 'warning' } {
+    switch (check) {
+      case 'knee_inward':
+        return this.hasKneeInward(cleaning)
+          ? { penalty: 20, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'insufficient_depth': {
+        const shallowTurnaround =
+          stage === 'ascending' &&
+          this.stagePath.includes('descending') &&
+          !this.stagePath.includes('bottom');
+        return shallowTurnaround
+          ? { penalty: 15, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+      }
+
+      case 'back_leaning_forward':
+        return (angles.trunkForwardLean !== null && angles.trunkForwardLean > 35)
+          ? { penalty: 15, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'too_fast':
+        return this.isTooFast()
+          ? { penalty: 10, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'left_right_unbalanced':
+        return this.isLeftRightUnbalanced(cleaning)
+          ? { penalty: 10, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'back_rounding':
+        // 硬拉: 躯干前倾过大
+        return (angles.trunkForwardLean !== null && angles.trunkForwardLean > 45)
+          ? { penalty: 20, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'bar_distance':
+        // 硬拉: 杠铃离身体太远（肩前倾指标）
+        return (angles.trunkForwardLean !== null && angles.trunkForwardLean > 40)
+          ? { penalty: 15, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'body_not_straight': {
+        // 俯卧撑/平板: 身体不成一条直线
+        const { trunkForwardLean, hipAngle } = angles;
+        const isNotStraight =
+          (trunkForwardLean !== null && (trunkForwardLean < 5 || trunkForwardLean > 35)) ||
+          (hipAngle !== null && (hipAngle < 140 || hipAngle > 200));
+        return isNotStraight
+          ? { penalty: 20, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+      }
+
+      case 'hip_sagging':
+        // 平板: 塌腰
+        return stage === 'plank_sagging'
+          ? { penalty: 25, severity: 'error' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'knee_over_toe':
+        // 弓步蹲: 前膝超过脚尖
+        return this.isKneeOverToe(cleaning)
+          ? { penalty: 15, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'insufficient_height':
+        // 高抬腿: 抬腿不够高
+        return (angles.hipAngle !== null && angles.hipAngle > 110)
+          ? { penalty: 15, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      case 'insufficient_arm_raise':
+        // 开合跳: 手臂没举过头顶
+        return (angles.shoulderAngle !== null && angles.shoulderAngle < 120)
+          ? { penalty: 15, severity: 'warning' }
+          : { penalty: 0, severity: 'warning' };
+
+      default:
+        return { penalty: 0, severity: 'warning' };
+    }
+  }
+
   private hasKneeInward(cleaning: PoseCleaningResult): boolean {
     const side = cleaning.selectedSide;
     if (side === 'unknown') return false;
@@ -400,9 +650,19 @@ export class PoseAlgorithmEngine {
     return (knee.x - hipAnkleX) * sideSign > Math.abs(ankle.x - hip.x) * 0.35;
   }
 
-  private isTooFast(kneeAngle: number | null): boolean {
-    if (kneeAngle === null || this.lastKneeAngleDelta === null) return false;
-    return this.lastKneeAngleDelta > 28;
+  private isKneeOverToe(cleaning: PoseCleaningResult): boolean {
+    const side = cleaning.selectedSide;
+    if (side === 'unknown') return false;
+    const knee = cleaning.keypoints[`${side}_knee`];
+    const ankle = cleaning.keypoints[`${side}_ankle`];
+    if (!isValid(knee) || !isValid(ankle)) return false;
+    // 膝盖 x 坐标超过脚踝 x 坐标（考虑方向）
+    return Math.abs(knee.x - ankle.x) > 0.08;
+  }
+
+  private isTooFast(): boolean {
+    if (this.lastAngleDelta === null) return false;
+    return this.lastAngleDelta > 28;
   }
 
   private isLeftRightUnbalanced(cleaning: PoseCleaningResult): boolean {
@@ -425,11 +685,12 @@ export class PoseAlgorithmEngine {
 
   // 前端特效指令
   private computeEffect(quality: QualityAssessment, completedRep: boolean): FrontendEffect {
+    if (quality.errors.length > 0 && !completedRep) return 'adjust';
     if (!completedRep) return null;
     if (quality.qualityScore >= 95) return 'perfect';
     if (quality.qualityScore >= 85) return 'excellent';
     if (quality.qualityScore >= 70) return 'good';
-    return null;
+    return 'adjust';
   }
 
   // 构建算法上下文给 LLM 用
@@ -441,12 +702,22 @@ export class PoseAlgorithmEngine {
     angles: JointAngles,
     quality: QualityAssessment,
   ): string {
+    const config = EXERCISE_CONFIGS[exercise as ExerciseType];
+    const exerciseName = config?.name ?? exercise;
+
+    const extra: string[] = [];
+    // 平板支撑额外信息
+    if (exercise === 'plank' && this.plankHoldSeconds > 0) {
+      extra.push(`坚持时间: ${this.plankHoldSeconds.toFixed(1)}秒.`);
+    }
+
     const lines = [
-      `运动: ${exercise}. 阶段: ${stage}. 次数: ${this.repCount}. 完成一次: ${completedRep}.`,
+      `运动: ${exerciseName}. 阶段: ${stage}. 次数: ${this.repCount}. 完成一次: ${completedRep}.`,
       `选择侧: ${cleaning.selectedSide}. 异常帧: ${cleaning.abnormalFrame}.`,
-      `角度: 膝=${angles.kneeAngle}° 髋=${angles.hipAngle}° 躯干=${angles.trunkAngle}° 前倾=${angles.trunkForwardLean}°.`,
+      `角度: 膝=${angles.kneeAngle}° 髋=${angles.hipAngle}° 躯干=${angles.trunkAngle}° 前倾=${angles.trunkForwardLean}° 肘=${angles.elbowAngle}° 肩=${angles.shoulderAngle}°.`,
       `质量分: ${quality.qualityScore}. 错误: [${quality.errors.join(',')}]. 警告: [${quality.warnings.join(',')}].`,
     ];
+    if (extra.length > 0) lines.push(...extra);
     return lines.join(' ');
   }
 }

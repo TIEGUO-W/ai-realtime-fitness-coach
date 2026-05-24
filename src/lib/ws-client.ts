@@ -33,12 +33,14 @@ export interface SetExercisePayload {
 
 // ─── 服务端 → 客户端 ────────────────────────────
 
+export type FrontendEffect = 'perfect' | 'excellent' | 'good' | 'adjust' | 'warning' | null;
+
 export interface CoachingFeedback {
   exercise: string;       // 识别到的运动
   repCount: number;       // 计数
   stage: string;          // 当前阶段
   quality: 'good' | 'warning' | 'error'; // 动作质量
-  effect: 'perfect' | 'excellent' | 'good' | null; // 前端特效指令
+  effect: FrontendEffect; // 前端特效指令
   tips: string[];         // 纠正建议
   encouragement: string;  // 鼓励语
 }
@@ -49,7 +51,7 @@ export interface AlgorithmUpdatePayload {
   stage: string;
   repCount: number;
   quality: 'good' | 'warning' | 'error';
-  effect: 'perfect' | 'excellent' | 'good' | null;
+  effect: FrontendEffect;
   kneeAngle: number | null;
   hipAngle: number | null;
 }

@@ -86,7 +86,7 @@ export default function PoseCoach() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [modelReady, setModelReady] = useState(false);
-  const [effectFlash, setEffectFlash] = useState<'perfect' | 'excellent' | 'good' | null>(null);
+  const [effectFlash, setEffectFlash] = useState<'perfect' | 'excellent' | 'good' | 'adjust' | 'warning' | null>(null);
 
   // ─── 模型预热：页面加载后自动初始化 MediaPipe，常驻内存 ───
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
