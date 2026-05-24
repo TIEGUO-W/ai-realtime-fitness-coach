@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { createWsConnection, type WsMessage, type CoachingFeedback, type Landmark } from '@/lib/ws-client';
+import {
+  createWsConnection,
+  type WsMessage,
+  type CoachingFeedback,
+  type Landmark,
+  type RemoteFramePayload,
+  type RpiStatusPayload,
+} from '@/lib/ws-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +37,7 @@ const EXERCISES = [
 ] as const;
 
 type ExerciseId = (typeof EXERCISES)[number]['id'];
+type SourceMode = 'local' | 'remote';
 
 function getSkeletonColor(quality: 'good' | 'warning' | 'error'): string {
   switch (quality) {
@@ -71,22 +79,42 @@ export default function PoseCoach() {
   const feedbackIdRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const poseInstanceRef = useRef<unknown>(null);
+  const remoteImgRef = useRef<HTMLImageElement | null>(null);
 
+  const [source, setSource] = useState<SourceMode>('local');
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<ExerciseId>('auto');
   const [currentFeedback, setCurrentFeedback] = useState<CoachingFeedback | null>(null);
   const [feedbackHistory, setFeedbackHistory] = useState<FeedbackEntry[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
+  const [rpiConnected, setRpiConnected] = useState(false);
   const [repCount, setRepCount] = useState(0);
   const [detectedExercise, setDetectedExercise] = useState('');
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
   const [poseDetected, setPoseDetected] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [remoteFps, setRemoteFps] = useState(0);
 
   // session ID
   useEffect(() => {
     sessionIdRef.current = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }, []);
+
+  // FPS 统计
+  const fpsCounterRef = useRef({ count: 0, lastTick: Date.now() });
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const counter = fpsCounterRef.current;
+      const now = Date.now();
+      const elapsed = (now - counter.lastTick) / 1000;
+      if (elapsed > 0) {
+        setRemoteFps(Math.round(counter.count / elapsed));
+      }
+      counter.count = 0;
+      counter.lastTick = now;
+    }, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   // TTS
@@ -112,6 +140,49 @@ export default function PoseCoach() {
 
   // WS 消息处理
   const handleWsMessage = useCallback((msg: WsMessage) => {
+    // 远程模式：接收服务端骨架检测的帧
+    if (msg.type === 'remote:frame') {
+      const payload = msg.payload as RemoteFramePayload;
+      fpsCounterRef.current.count++;
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      const img = remoteImgRef.current || new Image();
+      remoteImgRef.current = img;
+
+      img.onload = () => {
+        canvas.width = img.naturalWidth || 640;
+        canvas.height = img.naturalHeight || 480;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+      img.src = `data:image/jpeg;base64,${payload.image}`;
+      return;
+    }
+
+    // 远程模式：骨架坐标
+    if (msg.type === 'remote:skeleton') {
+      const payload = msg.payload as { landmarks: Landmark[] };
+      if (payload.landmarks && payload.landmarks.length > 0) {
+        setPoseDetected(true);
+      }
+      return;
+    }
+
+    // 远程模式：未检测到人体
+    if (msg.type === 'remote:nopose') {
+      setPoseDetected(false);
+      return;
+    }
+
+    // RPi 连接状态
+    if (msg.type === 'rpi:status') {
+      const payload = msg.payload as RpiStatusPayload;
+      setRpiConnected(payload.connected);
+      return;
+    }
+
+    // 教练反馈
     if (msg.type === 'coaching:feedback') {
       const feedback = msg.payload as CoachingFeedback;
       setCurrentFeedback(feedback);
@@ -145,7 +216,17 @@ export default function PoseCoach() {
     return () => wsRef.current?.close();
   }, [handleWsMessage]);
 
-  // 发送骨架帧
+  // 发送运动类型到服务端（远程模式需要）
+  useEffect(() => {
+    if (wsRef.current && source === 'remote') {
+      wsRef.current.send({
+        type: 'set:exercise',
+        payload: { exercise: selectedExercise === 'auto' ? '' : selectedExercise },
+      });
+    }
+  }, [selectedExercise, source]);
+
+  // 发送骨架帧（本地模式）
   const sendPoseBatch = useCallback(() => {
     if (!wsRef.current || frameBufferRef.current.length === 0) return;
     const frames = frameBufferRef.current.splice(0);
@@ -159,12 +240,12 @@ export default function PoseCoach() {
     });
   }, [selectedExercise]);
 
-  // 定时发送
+  // 定时发送骨架帧（本地模式）
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning || source !== 'local') return;
     const interval = setInterval(sendPoseBatch, 2000);
     return () => clearInterval(interval);
-  }, [isRunning, sendPoseBatch]);
+  }, [isRunning, sendPoseBatch, source]);
 
   // 绘制骨架
   const drawSkeleton = useCallback((
@@ -208,12 +289,11 @@ export default function PoseCoach() {
     ctx.shadowBlur = 0;
   }, []);
 
-  // 启动
-  const handleStart = useCallback(async () => {
+  // 本地模式启动
+  const handleStartLocal = useCallback(async () => {
     setIsLoading(true);
     setLoadError('');
     try {
-      // 动态加载 MediaPipe 脚本
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
 
@@ -251,7 +331,6 @@ export default function PoseCoach() {
 
         ctx.save();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        // 绘制视频帧（镜像翻转）
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
@@ -259,7 +338,6 @@ export default function PoseCoach() {
 
         if (results.poseLandmarks) {
           setPoseDetected(true);
-          // 镜像翻转骨架坐标
           const mirroredLandmarks = results.poseLandmarks.map(lm => ({
             x: 1 - lm.x,
             y: lm.y,
@@ -306,6 +384,23 @@ export default function PoseCoach() {
     }
   }, [drawSkeleton, quality]);
 
+  // 远程模式启动（无需摄像头，等 RPi 发帧）
+  const handleStartRemote = useCallback(() => {
+    setIsRunning(true);
+    setRepCount(0);
+    setFeedbackHistory([]);
+    setCurrentFeedback(null);
+  }, []);
+
+  // 通用启动
+  const handleStart = useCallback(() => {
+    if (source === 'local') {
+      handleStartLocal();
+    } else {
+      handleStartRemote();
+    }
+  }, [source, handleStartLocal, handleStartRemote]);
+
   const handleStop = useCallback(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cam = cameraRef.current as any;
@@ -320,6 +415,12 @@ export default function PoseCoach() {
     frameBufferRef.current = [];
   }, []);
 
+  // 切换模式时停止
+  const handleSourceChange = useCallback((newSource: SourceMode) => {
+    if (isRunning) handleStop();
+    setSource(newSource);
+  }, [isRunning, handleStop]);
+
   const qualityColor = { good: 'text-[#22D3A7]', warning: 'text-[#FF6B35]', error: 'text-[#FF4757]' }[quality];
   const qualityBg = {
     good: 'bg-[#22D3A7]/10 border-[#22D3A7]/30',
@@ -330,7 +431,7 @@ export default function PoseCoach() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0F1117] text-[#E8E9ED]">
-      {/* 左侧：摄像头 + 骨架 */}
+      {/* 左侧：摄像头/远程帧 + 骨架 */}
       <div className="flex flex-1 flex-col">
         <div className="relative flex-1 flex items-center justify-center bg-[#0A0C12]">
           <video ref={videoRef} className="hidden" playsInline muted />
@@ -338,10 +439,15 @@ export default function PoseCoach() {
 
           {!isRunning && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0A0C12]">
-              <div className="text-6xl opacity-20">🏃</div>
+              <div className="text-6xl opacity-20">
+                {source === 'local' ? '🏃' : '📡'}
+              </div>
               <p className="text-[#8B8FA3] text-sm">
-                {isLoading ? '正在初始化摄像头和骨架检测...' : '点击下方按钮开始训练'}
+                {isLoading ? '正在初始化...' : source === 'local' ? '点击下方按钮开始训练' : '等待树莓派视频流...'}
               </p>
+              {source === 'remote' && !rpiConnected && (
+                <p className="text-[#FF4757]/70 text-xs">树莓派未连接 — 请先运行 rpi_client.py</p>
+              )}
               {loadError && <p className="text-[#FF4757] text-xs">{loadError}</p>}
             </div>
           )}
@@ -350,12 +456,23 @@ export default function PoseCoach() {
           <div className="absolute left-4 top-4 flex items-center gap-2">
             <Badge variant="outline" className={`text-xs ${wsConnected ? 'border-[#22D3A7]/40 text-[#22D3A7]' : 'border-[#FF4757]/40 text-[#FF4757]'}`}>
               <span className={`mr-1 inline-block h-2 w-2 rounded-full ${wsConnected ? 'bg-[#22D3A7]' : 'bg-[#FF4757]'} animate-pulse`} />
-              {wsConnected ? '云端已连接' : '未连接'}
+              云端
             </Badge>
-            {isRunning && (
+            {source === 'remote' && (
+              <Badge variant="outline" className={`text-xs ${rpiConnected ? 'border-[#22D3A7]/40 text-[#22D3A7]' : 'border-[#FF4757]/40 text-[#FF4757]'}`}>
+                <span className={`mr-1 inline-block h-2 w-2 rounded-full ${rpiConnected ? 'bg-[#22D3A7]' : 'bg-[#FF4757]'} animate-pulse`} />
+                RPi {rpiConnected ? '在线' : '离线'}
+              </Badge>
+            )}
+            {isRunning && source === 'local' && (
               <Badge variant="outline" className="border-[#FF6B35]/40 text-[#FF6B35] text-xs">
                 <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#FF6B35] animate-pulse" />
                 LIVE
+              </Badge>
+            )}
+            {isRunning && source === 'remote' && remoteFps > 0 && (
+              <Badge variant="outline" className="border-[#22D3A7]/40 text-[#22D3A7] text-xs font-mono">
+                {remoteFps} FPS
               </Badge>
             )}
           </div>
@@ -383,18 +500,53 @@ export default function PoseCoach() {
               </div>
             </div>
           )}
+
+          {/* 模式标识 */}
+          {isRunning && (
+            <div className="absolute bottom-4 right-4">
+              <Badge variant="outline" className="border-[#8B8FA3]/30 text-[#8B8FA3] text-xs">
+                {source === 'local' ? '📷 本地摄像头' : '📡 RPi → 云端检测'}
+              </Badge>
+            </div>
+          )}
         </div>
 
         {/* 控制栏 */}
         <div className="flex items-center gap-3 border-t border-[#1A1D27] bg-[#0F1117] px-4 py-3">
+          {/* 模式切换 */}
+          <div className="flex items-center gap-1 rounded-lg bg-[#0A0C12] p-1">
+            <button
+              onClick={() => handleSourceChange('local')}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                source === 'local'
+                  ? 'bg-[#1A1D27] text-[#E8E9ED] shadow-sm'
+                  : 'text-[#8B8FA3] hover:text-[#E8E9ED]'
+              }`}
+            >
+              📷 本地
+            </button>
+            <button
+              onClick={() => handleSourceChange('remote')}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                source === 'remote'
+                  ? 'bg-[#1A1D27] text-[#E8E9ED] shadow-sm'
+                  : 'text-[#8B8FA3] hover:text-[#E8E9ED]'
+              }`}
+            >
+              📡 远程
+            </button>
+          </div>
+
+          <Separator orientation="vertical" className="h-6 bg-[#1A1D27]" />
+
           <Button
             onClick={isRunning ? handleStop : handleStart}
-            disabled={isLoading}
+            disabled={isLoading || (source === 'remote' && !rpiConnected && !isRunning)}
             className={isRunning
               ? 'bg-[#FF4757] hover:bg-[#FF4757]/80 text-white'
               : 'bg-[#FF6B35] hover:bg-[#FF6B35]/80 text-white'}
           >
-            {isLoading ? '初始化中...' : isRunning ? '停止训练' : '开始训练'}
+            {isLoading ? '初始化中...' : isRunning ? '停止训练' : source === 'local' ? '开始训练' : '开始接收'}
           </Button>
 
           <Separator orientation="vertical" className="h-6 bg-[#1A1D27]" />
@@ -534,8 +686,10 @@ export default function PoseCoach() {
         {/* 架构说明 */}
         <div className="border-t border-[#1A1D27] px-5 py-3">
           <div className="text-[10px] text-[#8B8FA3]/50 leading-relaxed">
-            架构: 浏览器 MediaPipe Pose → WebSocket → 云端 LLM 推理 → TTS 语音反馈<br/>
-            骨架数据仅 ~2KB/帧，无需传输视频流
+            {source === 'local'
+              ? '架构: 浏览器 MediaPipe Pose → WebSocket → 云端 LLM 推理 → TTS 语音反馈'
+              : '架构: RPi 摄像头 → WebSocket → 云端骨架检测 + LLM + TTS → 浏览器显示'
+            }
           </div>
         </div>
       </div>

@@ -1,17 +1,20 @@
 import { WebSocket, type WebSocketServer } from 'ws';
-import type { WsMessage, PoseBatchPayload, CoachingFeedback } from '../lib/ws-client';
+import type { WsMessage, PoseBatchPayload, CoachingFeedback, SetExercisePayload } from '../lib/ws-client';
 import { analyzePose } from './coaching-engine';
+import { browserClients } from '../lib/relay';
+import { setExerciseForCamera } from './camera';
 
 const ANALYZE_INTERVAL_MS = 2500; // 每 2.5 秒分析一次
 
 export function setupCoachingHandler(wss: WebSocketServer) {
   wss.on('connection', (ws: WebSocket) => {
-    console.log('[ws/coaching] client connected');
+    console.log('[ws/coaching] browser client connected');
+    browserClients.add(ws);
 
     let frameBuffer: PoseBatchPayload | null = null;
     let analyzeTimer: ReturnType<typeof setInterval> | null = null;
 
-    // 定时分析积累的帧
+    // 定时分析积累的帧（本地模式：浏览器发骨架数据过来）
     function startAnalyzeLoop() {
       if (analyzeTimer) return;
       analyzeTimer = setInterval(async () => {
@@ -42,6 +45,7 @@ export function setupCoachingHandler(wss: WebSocketServer) {
         return;
       }
 
+      // 本地模式：浏览器发来骨架帧
       if (msg.type === 'pose:batch') {
         const payload = msg.payload as PoseBatchPayload;
         // 积累帧数据
@@ -54,10 +58,17 @@ export function setupCoachingHandler(wss: WebSocketServer) {
         // 第一次收到帧时启动分析循环
         startAnalyzeLoop();
       }
+
+      // 设置运动类型（同步给 RPi 摄像头处理链路）
+      if (msg.type === 'set:exercise') {
+        const payload = msg.payload as SetExercisePayload;
+        setExerciseForCamera(payload.exercise || undefined);
+      }
     });
 
     ws.on('close', () => {
-      console.log('[ws/coaching] client disconnected');
+      console.log('[ws/coaching] browser client disconnected');
+      browserClients.delete(ws);
       if (analyzeTimer) clearInterval(analyzeTimer);
     });
   });
