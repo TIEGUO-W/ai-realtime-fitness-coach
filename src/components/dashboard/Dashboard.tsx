@@ -162,7 +162,7 @@ export default function Dashboard() {
           workout: {
             ...prev.workout,
             currentAction: EXERCISE_LABELS[p.exercise] || p.exercise || prev.workout.currentAction,
-            reps: p.repCount,
+            reps: Math.max(prev.workout.reps, p.repCount),
             isFormDeformed: p.quality === 'error',
             score: p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40),
           },
@@ -176,7 +176,7 @@ export default function Dashboard() {
           ...prev,
           workout: {
             ...prev.workout,
-            reps: p.repCount,
+            reps: Math.max(prev.workout.reps, p.repCount),
             score: p.quality ?? prev.workout.score,
           },
         }));
@@ -198,7 +198,7 @@ export default function Dashboard() {
           workout: {
             ...prev.workout,
             currentAction: EXERCISE_LABELS[fb.exercise] || fb.exercise || prev.workout.currentAction,
-            reps: fb.repCount,
+            reps: Math.max(prev.workout.reps, fb.repCount),
             isFormDeformed: fb.quality === 'error',
             score: prev.workout.score,
           },
