@@ -514,7 +514,8 @@ export class PoseAlgorithmEngine {
       if (knee > stand && dir === 'up') ns = 'standing';
     }
 
-    // 时序确认
+    // 时序确认（不直接修改 st.previousStage，由 analyze() 统一管理）
+    let confirmedStage: ExerciseStage = ps;
     if (ns !== this.pendingStage) {
       this.pendingStage = ns;
       this.stageCounter = 1;
@@ -522,12 +523,12 @@ export class PoseAlgorithmEngine {
       this.stageCounter++;
     }
     if (this.stageCounter >= CONFIRM_FRAMES) {
-      st.previousStage = ns;
+      confirmedStage = ns;
       this.stageCounter = 0;
       this.pendingStage = null;
     }
 
-    return { stage: st.previousStage, primaryValue: knee };
+    return { stage: confirmedStage, primaryValue: knee };
   }
 
   /** 通用弯曲阶段识别（俯卧撑/弓步蹲等） */
@@ -586,13 +587,7 @@ export class PoseAlgorithmEngine {
     if (stage === 'unknown') return false;
     if (exercise === 'plank') return false; // 平板支撑不计次
 
-    // 防抖：同一阶段需要连续3帧确认
-    if (stage !== st.previousStage) {
-      st.stageConfirmCount = 1;
-      return false;
-    }
-    st.stageConfirmCount = (st.stageConfirmCount ?? 0) + 1;
-    if (st.stageConfirmCount < 3) return false;
+    const stageChanged = stage !== st.previousStage;
 
     // 简化计数：回到"上"阶段 且 之前经过"下"阶段 = 完成一次
     const isUpStage = (s: ExerciseStage) =>
@@ -609,12 +604,15 @@ export class PoseAlgorithmEngine {
       completed = currentSide !== null && st.lastHighKneeSide !== null && currentSide !== st.lastHighKneeSide;
       if (currentSide !== null) st.lastHighKneeSide = currentSide;
     } else {
-      // 其他运动：down → up = 完成一次
-      const wasDown = st.hadDownPhase;
+      // 其他运动：down → up = 完成一次（直接基于阶段变化，无需额外防抖）
       if (isDownStage(stage)) {
         st.hadDownPhase = true;
-      } else if (isUpStage(stage) && wasDown) {
+      } else if (isUpStage(stage) && st.hadDownPhase && stageChanged) {
         completed = true;
+        st.hadDownPhase = false;
+      }
+      // 从 up 阶段开始时重置 hadDownPhase（防止误触发）
+      if (isUpStage(stage) && !st.hadDownPhase && stageChanged) {
         st.hadDownPhase = false;
       }
     }
@@ -622,7 +620,7 @@ export class PoseAlgorithmEngine {
     if (completed) {
       st.repCount += 1;
       st.hadDownPhase = false;
-      console.log(`[${exercise}] REP #${st.repCount}!`);
+      console.log(`[${exercise}] REP #${st.repCount}! stage=${stage} prev=${st.previousStage}`);
     }
     return completed;
   }
