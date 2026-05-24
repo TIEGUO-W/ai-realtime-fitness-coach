@@ -61,7 +61,7 @@ export default function PoseCoach() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraRef = useRef<unknown>(null);
   const wsRef = useRef<ReturnType<typeof createWsConnection> | null>(null);
-  const frameBufferRef = useRef<Landmark[][]>([]);
+  const frameBufferRef = useRef<Landmark[][]>([]); // 仅远程模式使用
   const sessionIdRef = useRef<string>('');
   const feedbackIdRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -86,6 +86,7 @@ export default function PoseCoach() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [modelReady, setModelReady] = useState(false);
+  const [effectFlash, setEffectFlash] = useState<'perfect' | 'excellent' | 'good' | null>(null);
 
   // ─── 模型预热：页面加载后自动初始化 MediaPipe，常驻内存 ───
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -234,8 +235,41 @@ export default function PoseCoach() {
       return;
     }
 
-    // 教练反馈
-    if (msg.type === 'coaching:feedback') {
+    // 实时算法更新（规则算法毫秒级推送，零延迟计数/阶段/质量）
+    if (msg.type === 'algorithm_update') {
+      const payload = msg.payload as {
+        exercise: string;
+        stage: string;
+        repCount: number;
+        quality: 'good' | 'warning' | 'error';
+        effect: 'perfect' | 'excellent' | 'good' | null;
+        kneeAngle: number | null;
+        hipAngle: number | null;
+      };
+      setDetectedExercise(payload.exercise);
+      setRepCount(payload.repCount);
+      setQuality(payload.quality);
+      // 更新实时角度显示等
+      return;
+    }
+
+    // 完成一次动作（触发特效）
+    if (msg.type === 'rep_completed') {
+      const payload = msg.payload as {
+        repCount: number;
+        effect: 'perfect' | 'excellent' | 'good' | null;
+        quality: number;
+      };
+      setRepCount(payload.repCount);
+      if (payload.effect) {
+        setEffectFlash(payload.effect);
+        setTimeout(() => setEffectFlash(null), 1500);
+      }
+      return;
+    }
+
+    // 教练反馈（LLM 话术，~3秒一次）
+    if (msg.type === 'coaching_feedback') {
       const feedback = msg.payload as CoachingFeedback;
       setCurrentFeedback(feedback);
       setDetectedExercise(feedback.exercise);
@@ -249,10 +283,19 @@ export default function PoseCoach() {
       };
       setFeedbackHistory(prev => [entry, ...prev].slice(0, 20));
 
-      if (feedback.quality !== 'good' && feedback.tips.length > 0) {
-        speakFeedback(feedback.tips[0]);
-      } else if (feedback.encouragement) {
-        speakFeedback(feedback.encouragement);
+      if (feedback.effect) {
+        setEffectFlash(feedback.effect);
+        setTimeout(() => setEffectFlash(null), 1500);
+      }
+    }
+
+    // TTS 语音播放
+    if (msg.type === 'tts_ready') {
+      const payload = msg.payload as { audioUrl: string; text: string };
+      if (payload.audioUrl) {
+        if (audioRef.current) audioRef.current.pause();
+        audioRef.current = new Audio(payload.audioUrl);
+        audioRef.current.play().catch(() => {});
       }
     }
   }, [speakFeedback]);
@@ -278,26 +321,26 @@ export default function PoseCoach() {
     }
   }, [selectedExercise, source]);
 
-  // 发送骨架帧（本地模式）
-  const sendPoseBatch = useCallback(() => {
-    if (!wsRef.current || frameBufferRef.current.length === 0) return;
-    const frames = frameBufferRef.current.splice(0);
+  // 发送单帧骨架（本地模式 → 规则算法每帧处理）
+  const sendPoseFrame = useCallback((landmarks: Landmark[]) => {
+    if (!wsRef.current) return;
     wsRef.current.send({
-      type: 'pose:batch',
+      type: 'pose_frame',
       payload: {
-        frames: frames.map(landmarks => ({ landmarks, timestamp: Date.now() })),
-        exercise: selectedExercise === 'auto' ? undefined : selectedExercise,
-        sessionId: sessionIdRef.current,
+        landmarks,
+        timestamp: Date.now(),
       },
     });
-  }, [selectedExercise]);
+  }, []);
 
-  // 定时发送骨架帧（本地模式）
+  // 定时发送运动类型（本地模式切换时通知服务端）
   useEffect(() => {
-    if (!isRunning || source !== 'local') return;
-    const interval = setInterval(sendPoseBatch, 2000);
-    return () => clearInterval(interval);
-  }, [isRunning, sendPoseBatch, source]);
+    if (!wsRef.current || source !== 'local') return;
+    wsRef.current.send({
+      type: 'set_exercise',
+      payload: { exercise: selectedExercise === 'auto' ? 'squat' : selectedExercise },
+    });
+  }, [selectedExercise, source]);
 
   // 绘制骨架
   const drawSkeleton = useCallback((
@@ -416,10 +459,8 @@ export default function PoseCoach() {
               z: p.z,
               visibility: p.visibility ?? 0,
             }));
-            frameBufferRef.current.push(frame);
-            if (frameBufferRef.current.length > 30) {
-              frameBufferRef.current = frameBufferRef.current.slice(-30);
-            }
+            // 每帧直接发送到服务端（规则算法实时处理）
+            sendPoseFrame(frame);
           } else {
             setPoseDetected(false);
           }
@@ -496,6 +537,27 @@ export default function PoseCoach() {
         <div className="relative flex-1 flex items-center justify-center bg-[#0A0C12]">
           <video ref={videoRef} className="hidden" playsInline muted />
           <canvas ref={canvasRef} className="h-full w-full object-contain" />
+
+          {/* 完成动作特效 */}
+          {effectFlash && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div
+                className="animate-bounce text-5xl font-black tracking-wider"
+                style={{
+                  color: effectFlash === 'perfect' ? '#FFD700'
+                    : effectFlash === 'excellent' ? '#22D3A7'
+                    : '#FF6B35',
+                  textShadow: `0 0 30px ${
+                    effectFlash === 'perfect' ? '#FFD70080'
+                    : effectFlash === 'excellent' ? '#22D3A780'
+                    : '#FF6B3580'
+                  }`,
+                }}
+              >
+                {effectFlash === 'perfect' ? 'PERFECT!' : effectFlash === 'excellent' ? 'EXCELLENT!' : 'GOOD!'}
+              </div>
+            </div>
+          )}
 
           {!isRunning && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0A0C12]">

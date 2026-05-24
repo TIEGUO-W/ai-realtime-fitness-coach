@@ -36,9 +36,22 @@ export interface SetExercisePayload {
 export interface CoachingFeedback {
   exercise: string;       // 识别到的运动
   repCount: number;       // 计数
+  stage: string;          // 当前阶段
   quality: 'good' | 'warning' | 'error'; // 动作质量
+  effect: 'perfect' | 'excellent' | 'good' | null; // 前端特效指令
   tips: string[];         // 纠正建议
   encouragement: string;  // 鼓励语
+}
+
+// 实时算法结果（规则算法毫秒级推送，不等 LLM）
+export interface AlgorithmUpdatePayload {
+  exercise: string;
+  stage: string;
+  repCount: number;
+  quality: 'good' | 'warning' | 'error';
+  effect: 'perfect' | 'excellent' | 'good' | null;
+  kneeAngle: number | null;
+  hipAngle: number | null;
 }
 
 export interface TTSReadyPayload {

@@ -1,162 +1,126 @@
-import { LLMClient, Config } from 'coze-coding-dev-sdk';
-import type { PoseBatchPayload, CoachingFeedback, Landmark } from '../lib/ws-client';
+/**
+ * 教练推理引擎 — 规则算法先行 + LLM 辅助话术
+ * 
+ * 核心优化:
+ * - 实时计数/阶段/质量 = 规则算法（毫秒级）
+ * - 教练话术 = LLM（2-3秒一次，基于算法结果）
+ * - 前端特效 = 规则算法直接触发（零延迟）
+ */
 
-// 关键关节索引（MediaPipe Pose 33 landmarks）
-const JOINT_NAMES: Record<number, string> = {
-  0: 'nose',
-  11: 'left_shoulder',
-  12: 'right_shoulder',
-  13: 'left_elbow',
-  14: 'right_elbow',
-  15: 'left_wrist',
-  16: 'right_wrist',
-  23: 'left_hip',
-  24: 'right_hip',
-  25: 'left_knee',
-  26: 'right_knee',
-  27: 'left_ankle',
-  28: 'right_ankle',
+import { LLMClient, Config } from 'coze-coding-dev-sdk';
+import type { AlgorithmResult, FrontendEffect } from './pose-algorithm';
+
+// ─── 类型 ──────────────────────────────────────
+
+export interface CoachingFeedback {
+  exercise: string;
+  repCount: number;
+  stage: string;
+  quality: 'good' | 'warning' | 'error';
+  effect: FrontendEffect;
+  tips: string[];
+  encouragement: string;
+}
+
+// 规则算法 → 错误代码中文映射
+const ERROR_MESSAGES: Record<string, string> = {
+  knee_inward: '膝盖内扣',
+  insufficient_depth: '下蹲不够深',
+  back_leaning_forward: '身体过度前倾',
 };
 
-// 提取关键关节信息，减少 token 消耗
-function extractKeyJoints(landmarks: Landmark[]): string {
-  const result: string[] = [];
-  for (const [idx, name] of Object.entries(JOINT_NAMES)) {
-    const lm = landmarks[Number(idx)];
-    if (lm && lm.visibility > 0.5) {
-      result.push(`${name}:(${lm.x.toFixed(3)},${lm.y.toFixed(3)},${lm.z.toFixed(3)})`);
-    }
-  }
-  return result.join(' ');
-}
+const WARNING_MESSAGES: Record<string, string> = {
+  movement_too_fast: '动作太快，控制节奏',
+  left_right_unbalanced: '左右不对称',
+  low_keypoint_confidence: '检测不稳定',
+};
 
-// 计算简单统计：关节角度、位置变化等
-function computeSimpleMetrics(frames: Landmark[][]): string {
-  if (frames.length < 2) return '数据不足，无法计算变化趋势';
+const STAGE_MESSAGES: Record<string, string> = {
+  standing: '站立',
+  descending: '下蹲中',
+  bottom: '蹲到底了',
+  ascending: '起身中',
+  unknown: '准备中',
+};
 
-  const first = frames[0];
-  const last = frames[frames.length - 1];
-  const changes: string[] = [];
+// ─── LLM 话术生成 ──────────────────────────────
 
-  // 计算髋关节中点的纵向变化（用于深蹲等动作）
-  const hipY_first = (first[23].y + first[24].y) / 2;
-  const hipY_last = (last[23].y + last[24].y) / 2;
-  const hipDelta = (hipY_last - hipY_first).toFixed(3);
-  changes.push(`髋部纵向变化: ${hipDelta}`);
+const COACHING_PROMPT = `你是一位简短有力的运动教练。你会收到规则算法的结果，需要生成2条以内的纠正建议和1句8字以内的鼓励。
 
-  // 计算膝盖角度变化
-  const kneeAngle_first = computeAngle(first[23], first[25], first[27]); // 左腿
-  const kneeAngle_last = computeAngle(last[23], last[25], last[27]);
-  changes.push(`左膝角度: ${kneeAngle_first.toFixed(1)}° → ${kneeAngle_last.toFixed(1)}°`);
+规则算法已经完成了：计数、阶段识别、角度计算、质量评分。
+你只需要把算法结果翻译成人话。
 
-  // 计算肩部稳定性
-  const shoulderSway = Math.abs(first[11].x - first[12].x - (last[11].x - last[12].x));
-  changes.push(`肩部晃动: ${shoulderSway.toFixed(3)}`);
-
-  return changes.join('; ');
-}
-
-function computeAngle(a: Landmark, b: Landmark, c: Landmark): number {
-  const ba = { x: a.x - b.x, y: a.y - b.y };
-  const bc = { x: c.x - b.x, y: c.y - b.y };
-  const dot = ba.x * bc.x + ba.y * bc.y;
-  const magBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y);
-  const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y);
-  if (magBA === 0 || magBC === 0) return 0;
-  const cosAngle = Math.max(-1, Math.min(1, dot / (magBA * magBC)));
-  return Math.acos(cosAngle) * (180 / Math.PI);
-}
-
-const SYSTEM_PROMPT = `你是一位专业的实时运动教练 AI。你会收到用户的骨架关键点数据和简单运动指标，需要：
-
-1. 判断用户正在做什么运动（深蹲、俯卧撑、硬拉、开合跳、平板支撑、弓步蹲、其他）
-2. 评估动作质量（good/warning/error）
-3. 给出具体的纠正建议（最多2条，简短有力）
-4. 估计完成的次数（如果是计数类运动）
-5. 给一句简短的鼓励（10字以内）
-
-你必须以严格的 JSON 格式回复，不要有任何其他文字：
+必须以严格的 JSON 格式回复：
 {
-  "exercise": "运动名称",
-  "repCount": 数字,
-  "quality": "good" 或 "warning" 或 "error",
   "tips": ["建议1", "建议2"],
   "encouragement": "鼓励语"
 }
 
-注意：
-- 坐标归一化到 0-1，y轴向下为正
-- 如果数据不足以判断，给出最可能的估计
-- quality 判断标准：good=动作标准, warning=轻微偏差, error=可能受伤风险
-- tips 要具体到身体部位和调整方向，如"膝盖不要内扣，保持与脚尖同向"
-- encouragement 要自然口语化`;
+规则：
+- tips 最多2条，每条15字以内，要具体到身体部位
+- encouragement 8字以内，口语化
+- 如果质量分>=90，tips为空数组，只给鼓励
+- 不要重复算法已经识别的内容，只给纠正建议`;
 
-export async function analyzePose(batch: PoseBatchPayload): Promise<CoachingFeedback> {
-  const keyFrames = batch.frames.slice(-5); // 只取最近5帧
+/**
+ * 基于算法结果生成教练话术
+ * 先用规则快速生成，再用 LLM 润色
+ */
+export async function generateCoaching(algorithmResult: AlgorithmResult): Promise<CoachingFeedback> {
+  const { exercise, stage, repCount, quality, effect, algorithmContext } = algorithmResult;
 
-  // 提取关键信息
-  const frameDescriptions = keyFrames.map((f, i) => {
-    const joints = extractKeyJoints(f.landmarks);
-    return `帧${i + 1}: ${joints}`;
-  });
+  // 规则算法直接给出的结果（零延迟）
+  const ruleBasedFeedback: CoachingFeedback = {
+    exercise,
+    repCount,
+    stage: STAGE_MESSAGES[stage] || stage,
+    quality: quality.qualityScore >= 85 ? 'good' : quality.qualityScore >= 60 ? 'warning' : 'error',
+    effect,
+    tips: [
+      ...quality.errors.map((e) => ERROR_MESSAGES[e] || e),
+      ...quality.warnings.map((w) => WARNING_MESSAGES[w] || w),
+    ].slice(0, 2),
+    encouragement: repCount > 0 ? `已完成${repCount}次！` : '继续！',
+  };
 
-  const metrics = computeSimpleMetrics(keyFrames.map(f => f.landmarks));
+  // 质量分 >= 90 且无错误 → 不需要调 LLM
+  if (quality.qualityScore >= 90 && quality.errors.length === 0) {
+    ruleBasedFeedback.tips = [];
+    ruleBasedFeedback.encouragement = repCount > 0 ? '完美！继续保持' : '动作很标准！';
+    return ruleBasedFeedback;
+  }
 
-  const userMessage = `用户当前选择的运动: ${batch.exercise || '自动识别'}
-时间窗口内帧数: ${batch.frames.length}
-关键帧骨架数据:
-${frameDescriptions.join('\n')}
-
-简单指标: ${metrics}
-
-请分析动作并给出教练反馈。`;
-
+  // 有错误或质量分不高 → 让 LLM 生成更有人味的话术
   try {
     const config = new Config();
     const client = new LLMClient(config);
 
     const response = await client.invoke(
       [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
+        { role: 'system', content: COACHING_PROMPT },
+        { role: 'user', content: `算法结果: ${algorithmContext}` },
       ],
       {
-        model: 'doubao-seed-2-0-mini-260215', // 快速模型，低延迟
-        temperature: 0.3,
+        model: 'doubao-seed-2-0-mini-260215',
+        temperature: 0.5,
         thinking: 'disabled',
       },
     );
 
-    // 解析 LLM 返回的 JSON
     const content = response.content.trim();
-    // 尝试提取 JSON（LLM 可能会包裹在 markdown 代码块中）
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return fallbackFeedback(batch.exercise);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed.tips)) {
+        ruleBasedFeedback.tips = parsed.tips.slice(0, 2);
+      }
+      if (typeof parsed.encouragement === 'string') {
+        ruleBasedFeedback.encouragement = parsed.encouragement;
+      }
     }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    return {
-      exercise: parsed.exercise || '未知运动',
-      repCount: Math.max(0, Number(parsed.repCount) || 0),
-      quality: ['good', 'warning', 'error'].includes(parsed.quality)
-        ? parsed.quality
-        : 'warning',
-      tips: Array.isArray(parsed.tips) ? parsed.tips.slice(0, 2) : [],
-      encouragement: parsed.encouragement || '继续加油！',
-    };
   } catch (err) {
-    console.error('[coaching-engine] LLM error:', err);
-    return fallbackFeedback(batch.exercise);
+    console.error('[coaching-engine] LLM error, using rule-based fallback:', err);
   }
-}
 
-function fallbackFeedback(exercise?: string): CoachingFeedback {
-  return {
-    exercise: exercise || '未知运动',
-    repCount: 0,
-    quality: 'warning',
-    tips: ['正在分析动作，请保持运动'],
-    encouragement: '加油！',
-  };
+  return ruleBasedFeedback;
 }

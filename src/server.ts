@@ -4,7 +4,7 @@ import next from 'next';
 import { WebSocketServer } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
-import { setupCoachingHandler } from './ws-handlers/coaching';
+import { handleCoachingConnection } from './ws-handlers/coaching';
 import { setupCameraHandler } from './ws-handlers/camera';
 
 const dev = process.env.COZE_PROJECT_ENV !== 'PROD';
@@ -38,7 +38,8 @@ function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
 
 // ─── 注册端点 & 绑定业务逻辑 ──────────────────────
 // /ws/coaching — 浏览器连接（本地模式骨架帧 + 教练反馈）
-setupCoachingHandler(registerWsEndpoint('/ws/coaching'));
+const coachingWss = registerWsEndpoint('/ws/coaching');
+coachingWss.on('connection', (ws) => handleCoachingConnection(ws));
 // /ws/camera — 树莓派连接（JPEG 帧流 → 服务端骨架检测 → 推流给浏览器）
 setupCameraHandler(registerWsEndpoint('/ws/camera'));
 

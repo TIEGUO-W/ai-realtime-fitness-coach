@@ -1,7 +1,7 @@
 import { WebSocket, type WebSocketServer } from 'ws';
 import { setRpiClient, broadcastToBrowsers } from '../lib/relay';
 import { detectPoseFromJpeg, type DetectedPose } from '../services/pose-detector';
-import type { WsMessage, Landmark, PoseFrame } from '../lib/ws-client';
+import type { PoseFrame } from '../lib/ws-client';
 
 // 帧处理节流 — 避免树莓派帧率过高导致 CPU 过载
 const MIN_FRAME_INTERVAL_MS = 80; // 最多 ~12fps 处理
@@ -61,7 +61,7 @@ export function setupCameraHandler(wss: WebSocketServer) {
 
           // 3. 自动积累骨架帧供 LLM 分析
           // 将骨架帧 push 到 coaching handler 的缓冲区
-          accumulateForCoaching(pose.landmarks);
+          processFrameAlgorithms(pose.landmarks);
         } else {
           // 没检测到人体 — 只转发原始帧
           const frameBase64 = raw.toString('base64');
@@ -96,43 +96,101 @@ export function setupCameraHandler(wss: WebSocketServer) {
   });
 }
 
-// ─── 骨架帧缓冲 + 定时 LLM 分析 ─────────────────────
-import { analyzePose } from './coaching-engine';
-import type { PoseBatchPayload, CoachingFeedback } from '../lib/ws-client';
+// ─── 规则算法 + 定时 LLM 话术 + TTS ─────────────────────
+import { PoseAlgorithmEngine, type AlgorithmResult } from './pose-algorithm';
+import { generateCoaching } from './coaching-engine';
+import type { WsMessage, Landmark, CoachingFeedback, AlgorithmUpdatePayload, TTSReadyPayload } from '../lib/ws-client';
 
-let frameBuffer: PoseFrame[] = [];
 let currentExercise: string | undefined;
+let algorithmEngine: PoseAlgorithmEngine | null = null;
+let lastAlgoResult: AlgorithmResult | null = null;
 let analyzeTimer: ReturnType<typeof setInterval> | null = null;
-const ANALYZE_INTERVAL_MS = 2500;
+const ANALYZE_INTERVAL_MS = 3000;
+let ttsClient: import('coze-coding-dev-sdk').TTSClient | null = null;
 
-function accumulateForCoaching(landmarks: Landmark[]) {
-  frameBuffer.push({ landmarks, timestamp: Date.now() });
-  if (frameBuffer.length > 30) {
-    frameBuffer = frameBuffer.slice(-30);
+function getAlgorithmEngine(): PoseAlgorithmEngine {
+  if (!algorithmEngine) {
+    algorithmEngine = new PoseAlgorithmEngine();
   }
-  startAnalyzeLoop();
+  return algorithmEngine;
 }
 
-function startAnalyzeLoop() {
+async function getTTSClient() {
+  if (!ttsClient) {
+    const { TTSClient, Config } = await import('coze-coding-dev-sdk');
+    ttsClient = new TTSClient(new Config());
+  }
+  return ttsClient;
+}
+
+/** 每帧调用：规则算法实时处理 → 推送算法结果 + 特效 */
+function processFrameAlgorithms(landmarks: Landmark[]) {
+  const engine = getAlgorithmEngine();
+  const result = engine.analyze(landmarks, currentExercise || 'squat');
+  lastAlgoResult = result;
+
+  // 推送轻量算法结果给浏览器（毫秒级）
+  const algoMsg: WsMessage<AlgorithmUpdatePayload> = {
+    type: 'algorithm_update',
+    payload: {
+      exercise: result.exercise,
+      stage: result.stage,
+      repCount: result.repCount,
+      quality: result.quality.qualityScore >= 85 ? 'good' : result.quality.qualityScore >= 60 ? 'warning' : 'error',
+      effect: result.effect,
+      kneeAngle: result.angles.kneeAngle,
+      hipAngle: result.angles.hipAngle,
+    },
+  };
+  broadcastToBrowsers(JSON.stringify(algoMsg));
+
+  // 完成一次动作 → 推送特效指令
+  if (result.completedRep && result.effect) {
+    const repMsg: WsMessage<{ count: number; effect: string }> = {
+      type: 'rep_completed',
+      payload: { count: result.repCount, effect: result.effect },
+    };
+    broadcastToBrowsers(JSON.stringify(repMsg));
+  }
+
+  startNarrationLoop();
+}
+
+function startNarrationLoop() {
   if (analyzeTimer) return;
   analyzeTimer = setInterval(async () => {
-    if (frameBuffer.length === 0) return;
-
-    const batch: PoseBatchPayload = {
-      frames: frameBuffer.splice(0),
-      exercise: currentExercise,
-      sessionId: 'rpi-auto',
-    };
+    if (!lastAlgoResult) return;
 
     try {
-      const feedback = await analyzePose(batch);
+      // 用最新的算法结果生成教练反馈（LLM 辅助话术）
+      const feedback = await generateCoaching(lastAlgoResult);
       const msg: WsMessage<CoachingFeedback> = {
         type: 'coaching:feedback',
         payload: feedback,
       };
       broadcastToBrowsers(JSON.stringify(msg));
+
+      // TTS 语音播放
+      const ttsText = [...feedback.tips, feedback.encouragement].filter(Boolean).join('。');
+      if (ttsText) {
+        try {
+          const client = await getTTSClient();
+          const ttsResult = await client.synthesize({
+            uid: 'pose-coach-camera',
+            text: ttsText,
+            speaker: 'zh_male_m191_uranus_bigtts',
+          });
+          const ttsMsg: WsMessage<TTSReadyPayload> = {
+            type: 'tts_ready',
+            payload: { audioUrl: ttsResult.audioUri, text: ttsText },
+          };
+          broadcastToBrowsers(JSON.stringify(ttsMsg));
+        } catch (ttsErr) {
+          console.error('[ws/camera] TTS error:', ttsErr);
+        }
+      }
     } catch (err) {
-      console.error('[ws/camera] LLM analyze error:', err);
+      console.error('[ws/camera] coaching error:', err);
     }
   }, ANALYZE_INTERVAL_MS);
 }
@@ -140,4 +198,8 @@ function startAnalyzeLoop() {
 /** 浏览器可设置当前运动类型 */
 export function setExerciseForCamera(exercise: string | undefined) {
   currentExercise = exercise;
+  if (algorithmEngine) {
+    algorithmEngine.reset();
+  }
+  lastAlgoResult = null;
 }
