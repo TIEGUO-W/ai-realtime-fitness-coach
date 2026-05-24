@@ -95,34 +95,55 @@ export default function Dashboard() {
   }));
 
   // Speaking state for monster mouth animation
+  // ─── TTS Playback Queue ────────────────────────────
   const [isSpeaking, setIsSpeaking] = useState(false);
   const currentCoachMsgRef = useRef('');
+  const audioQueueRef = useRef<string[]>([]);
+  const isPlayingRef = useRef(false);
 
-  // TTS playback: fetch+blob
-  const playAudioUrl = useCallback(async (audioUrl: string) => {
+  // Strip URLs from coaching text (e.g. audio links from Doubao bot)
+  const stripUrls = (text: string): string =>
+    text.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
+
+  // Play next audio in queue
+  const playNextInQueue = useCallback(async () => {
+    if (isPlayingRef.current) return;
+    const nextUrl = audioQueueRef.current.shift();
+    if (!nextUrl) return;
+
+    isPlayingRef.current = true;
+    setIsSpeaking(true);
     try {
-      console.log('[TTS] 开始播放:', audioUrl?.substring(0, 80));
-      setIsSpeaking(true);
-      const resp = await fetch(audioUrl);
+      const resp = await fetch(nextUrl);
       const blob = await resp.blob();
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
       audio.onended = () => {
         URL.revokeObjectURL(blobUrl);
+        isPlayingRef.current = false;
         setIsSpeaking(false);
-        console.log('[TTS] 播放结束');
+        playNextInQueue(); // play next in queue
       };
       audio.onerror = () => {
+        isPlayingRef.current = false;
         setIsSpeaking(false);
-        console.error('[TTS] 音频播放出错');
+        playNextInQueue(); // continue queue on error
       };
       await audio.play();
-      console.log('[TTS] blob 播放成功');
-    } catch (e) {
+    } catch {
+      isPlayingRef.current = false;
       setIsSpeaking(false);
-      console.error('[TTS] blob 播放失败:', e);
+      playNextInQueue(); // continue queue on error
     }
   }, []);
+
+  // Enqueue audio URL for sequential playback
+  const enqueueAudio = useCallback((audioUrl: string) => {
+    audioQueueRef.current.push(audioUrl);
+    if (!isPlayingRef.current) {
+      playNextInQueue();
+    }
+  }, [playNextInQueue]);
 
   // ─── WS Message Handler ──────────────────────────────
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -166,7 +187,8 @@ export default function Dashboard() {
         setRepCount(fb.repCount);
         setDetectedExercise(fb.exercise);
         setQuality(fb.quality);
-        const coachMsg = fb.encouragement || (fb.tips.length > 0 ? fb.tips[0] : '');
+        const rawMsg = fb.encouragement || (fb.tips.length > 0 ? fb.tips[0] : '');
+        const coachMsg = stripUrls(rawMsg);
         if (coachMsg) {
           lastCoachMsgTimeRef.current = Date.now();
           currentCoachMsgRef.current = coachMsg;
@@ -190,8 +212,7 @@ export default function Dashboard() {
       }
       case 'tts_ready': {
         const tts = msg.payload as TTSReadyPayload;
-        console.log('[TTS] 收到 tts_ready:', tts.audioUrl?.substring(0, 80));
-        playAudioUrl(tts.audioUrl);
+        enqueueAudio(tts.audioUrl);
         break;
       }
       case 'remote_frame': {
@@ -214,7 +235,7 @@ export default function Dashboard() {
         break;
       }
     }
-  }, [playAudioUrl]);
+  }, [enqueueAudio]);
 
   // ─── Connect WS ──────────────────────────────────────
   useEffect(() => {

@@ -419,7 +419,10 @@ async function askDoubaoDeepCoach(
       }
     }
 
-    if (coachText || audioUrl) {
+    // Strip any URLs that might leak into the coach text (e.g. audio links from bot response)
+    const cleanText = coachText.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
+
+    if (cleanText || audioUrl) {
       safeSend(ws, {
         type: 'coaching_feedback',
         payload: {
@@ -429,8 +432,8 @@ async function askDoubaoDeepCoach(
           quality: result.quality.qualityScore >= 85 ? 'good' as const
             : result.quality.qualityScore >= 60 ? 'warning' as const : 'error' as const,
           effect: result.effect,
-          tips: coachText ? [coachText] : [],
-          encouragement: '',
+          tips: cleanText ? [cleanText] : [],
+          encouragement: cleanText,
         },
       });
 
