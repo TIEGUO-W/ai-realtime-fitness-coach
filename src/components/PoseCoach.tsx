@@ -592,24 +592,30 @@ export default function PoseCoach() {
 
   // ===== 语音交互（开关模式 + Web Speech API 持续监听）=====
   const recognitionRef = useRef<any>(null);
+  const isRecordingRef = useRef(false); // 用 ref 追踪录音状态，避免闭包陷阱
+
+  // 同步 isRecording state 到 ref
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
   const toggleVoiceMode = useCallback(() => {
-    if (isRecording) {
+    if (isRecordingRef.current) {
       // 关闭语音模式
+      stopRecordingLoop(); // 停止降级模式
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        recognitionRef.current.onend = null; // 阻止自动重启
+        try { recognitionRef.current.stop(); } catch (_) {}
         recognitionRef.current = null;
       }
       setIsRecording(false);
+      isRecordingRef.current = false;
       return;
     }
 
     // 开启语音模式
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.error('浏览器不支持 Web Speech API，请使用 Chrome');
-      // 降级：用 MediaRecorder + 后端 ASR
-      startRecordingFallback();
+      console.warn('浏览器不支持 Web Speech API，尝试 MediaRecorder 降级');
+      startRecordingLoop();
       return;
     }
 
@@ -632,15 +638,17 @@ export default function PoseCoach() {
     };
 
     recognition.onerror = (event: any) => {
-      console.error('语音识别错误:', event.error);
-      if (event.error === 'not-allowed') {
+      console.warn('语音识别错误:', event.error);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         setIsRecording(false);
+        isRecordingRef.current = false;
       }
+      // 其他错误（network 等）让 onend 处理重启
     };
 
     recognition.onend = () => {
-      // 持续模式：如果还在录音状态，自动重启
-      if (isRecording && recognitionRef.current) {
+      // 用 ref 判断最新状态，避免闭包陷阱
+      if (isRecordingRef.current) {
         try { recognition.start(); } catch (_) { /* 忽略重复启动 */ }
       }
     };
@@ -648,10 +656,12 @@ export default function PoseCoach() {
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
-  }, [isRecording]);
+    isRecordingRef.current = true;
+  }, []);
 
-  // 降级方案：MediaRecorder + 后端 ASR
-  const startRecordingFallback = useCallback(async () => {
+  // 降级方案：循环录音模式（每3秒一段 → ASR → 发送 → 继续录）
+  const recorderLoopRef = useRef<any>(null);
+  const startRecordingLoop = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
@@ -662,31 +672,41 @@ export default function PoseCoach() {
       };
 
       recorder.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(chunks, { type: 'audio/webm' });
+        chunks.length = 0;
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = (reader.result as string).split(',')[1];
           if (base64 && wsRef.current) {
             wsRef.current.send({
               type: 'voice_command',
-              payload: { base64Data: base64 },
+              payload: { base64Data: base64, format: 'webm' },
             });
           }
         };
         reader.readAsDataURL(blob);
-        setIsRecording(false);
+        // 继续下一段录音（如果还在录音模式）
+        if (isRecordingRef.current && recorder.state === 'inactive') {
+          try { recorder.start(); } catch (_) {}
+        }
       };
 
-      recorder.start();
+      recorder.start(3000); // 每3秒触发一次 ondataavailable
+      recorderLoopRef.current = { recorder, stream };
       setIsRecording(true);
-      // 3秒自动发送
-      setTimeout(() => {
-        if (recorder.state === 'recording') recorder.stop();
-      }, 3000);
+      isRecordingRef.current = true;
     } catch (err) {
-      console.error('麦克风访问失败:', err);
-      setIsRecording(false);
+      console.error('麦克风启动失败:', err);
+    }
+  }, []);
+
+  // 停止录音降级模式
+  const stopRecordingLoop = useCallback(() => {
+    if (recorderLoopRef.current) {
+      const { recorder, stream } = recorderLoopRef.current;
+      if (recorder.state === 'recording') recorder.stop();
+      stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      recorderLoopRef.current = null;
     }
   }, []);
 
