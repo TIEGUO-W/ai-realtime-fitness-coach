@@ -268,11 +268,11 @@ export class PoseAlgorithmEngine {
     const trunkLean = (sh && hi) ? r2(Math.atan(Math.abs(sh.x - hi.x) / Math.max(Math.abs(sh.y - hi.y), 0.001)) * 180 / Math.PI) : null;
 
     return {
-      kneeAngle: r2(calcAngle(hi, kn, an)),
-      hipAngle: r2(calcAngle(sh, hi, kn)),
+      kneeAngle: calcAngle(hi, kn, an) !== null ? r2(calcAngle(hi, kn, an)!) : null,
+      hipAngle: calcAngle(sh, hi, kn) !== null ? r2(calcAngle(sh, hi, kn)!) : null,
       trunkAngle: null,
       trunkForwardLean: trunkLean,
-      elbowAngle: r2(calcAngle(sh, el, wr)),
+      elbowAngle: calcAngle(sh, el, wr) !== null ? r2(calcAngle(sh, el, wr)!) : null,
       shoulderAngle: null,
       ankleAngle: null,
     };

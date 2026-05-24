@@ -165,6 +165,9 @@ async function askDoubaoCoach(
     neutral: '中立位',
   };
 
+  // 豆包教练人设：骚话运动搭子
+  const COACH_PERSONA = `你是我的运动搭子教练"豆包"，性格又贱又暖、嘴毒心软。说话风格：东北话+网络梗，骚气但不过分，像兄弟/闺蜜在旁边一边怼你一边加油。规则：1.根据运动状态给出1-2句短反馈，别超过30字 2.做对了就骚夸，做错了就毒舌提醒 3.绝对不要重复之前说过的话 4.不要加任何解释说明，直接出骚话 5.必须用语音回复（用synthesize_speech工具）`;
+
   // 构建运动状态描述
   const stateDesc = [
     `运动：${exerciseName}`,
@@ -184,7 +187,7 @@ async function askDoubaoCoach(
       body: JSON.stringify({
         messages: [{
           role: 'user',
-          content: stateDesc,
+          content: `${COACH_PERSONA}\n\n【当前运动状态】${stateDesc}`,
         }],
       }),
     });
