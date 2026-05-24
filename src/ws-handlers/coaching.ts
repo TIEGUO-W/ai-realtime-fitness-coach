@@ -148,18 +148,18 @@ function getTTSClient(): TTSClient {
 }
 
 const DOUBAO_VOICE_BOT_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
-const TTS_MODE = process.env.TTS_MODE || 'direct'; // 'direct' 或 'doubao'
+const TTS_MODE = process.env.TTS_MODE || 'doubao'; // 'doubao'(默认，豆包音色) 或 'direct'(SDK直出降级)
 
 async function synthesizeTTS(text: string): Promise<string | null> {
   const trimmed = text.slice(0, 200);
 
   try {
-    if (TTS_MODE === 'doubao') {
-      // 豆包智能体模式：豆包自己理解并回复（延迟 ~3秒，但更有豆包味）
-      return await synthViaDoubao(trimmed);
-    } else {
-      // SDK 直出模式：一字不差转语音（延迟 ~1秒，精确可控）
+    if (TTS_MODE === 'direct') {
+      // SDK 直出降级模式：低延迟但无豆包味
       return await synthDirect(trimmed);
+    } else {
+      // 豆包语音智能体（默认）：带豆包音色，朗读前缀防止已读乱回
+      return await synthViaDoubao(trimmed);
     }
   } catch (err) {
     console.error('[coaching] TTS error:', err);
@@ -182,26 +182,34 @@ async function synthDirect(text: string): Promise<string | null> {
 }
 
 async function synthViaDoubao(text: string): Promise<string | null> {
-  const response = await fetch(DOUBAO_VOICE_BOT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: [{ role: 'user', content: text }],
-    }),
-  });
+  try {
+    const response = await fetch(DOUBAO_VOICE_BOT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{
+          role: 'user',
+          // 朗读前缀指令：防止豆包"已读乱回"，让它一字不差地念文本
+          content: `请一字不差地朗读以下文字，不要添加任何解释、评论或额外内容，只需原样读出：${text}`,
+        }],
+      }),
+    });
 
-  if (!response.ok) return null;
+    if (!response.ok) return null;
 
-  const data = await response.json() as {
-    messages: Array<{ type: string; content: string; name?: string }>;
-  };
+    const data = await response.json() as {
+      messages: Array<{ type: string; content: string; name?: string }>;
+    };
 
-  for (const msg of data.messages) {
-    if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
-      return msg.content.trim();
+    for (const msg of data.messages) {
+      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+        return msg.content.trim();
+      }
     }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function safeSend(ws: WebSocket, msg: WsMessage): void {

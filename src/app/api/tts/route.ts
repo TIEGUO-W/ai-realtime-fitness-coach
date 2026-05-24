@@ -3,7 +3,7 @@ import { TTSClient, Config } from 'coze-coding-dev-sdk';
 
 const DOUBAO_VOICE_BOT_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
 
-// SDK TTSClient 作为备用（直接文本转语音，不过脑子）
+// SDK TTSClient 降级备用（无豆包味，但低延迟）
 let ttsClient: TTSClient | null = null;
 function getTTSClient(): TTSClient {
   if (!ttsClient) {
@@ -22,12 +22,12 @@ export async function POST(request: NextRequest) {
 
     const trimmed = text.slice(0, 200);
 
-    // mode=doubao: 让豆包智能体自己生成话术+语音（适合需要豆包自己说话的场景）
-    // mode=direct 或默认: 直接把文本转语音，一字不差（适合规则引擎生成的话术）
-    if (mode === 'doubao') {
-      return await synthViaDoubaoBot(trimmed);
-    } else {
+    // 默认用豆包语音智能体（豆包音色，带朗读前缀防止已读乱回）
+    // mode=direct: SDK 直出，低延迟但无豆包味
+    if (mode === 'direct') {
       return await synthDirect(trimmed);
+    } else {
+      return await synthViaDoubaoBot(trimmed);
     }
   } catch (err) {
     console.error('[api/tts] error:', err);
@@ -36,59 +36,66 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * 方式1: 直接文本转语音（一字不差，低延迟）
- * 用 SDK TTSClient，音色可选
+ * 方式1（默认）: 豆包语音智能体 — 带豆包音色
+ * 关键：加朗读前缀指令，防止智能体"已读乱回"
+ */
+async function synthViaDoubaoBot(text: string) {
+  try {
+    const response = await fetch(DOUBAO_VOICE_BOT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{
+          role: 'user',
+          content: `请一字不差地朗读以下文字，不要添加任何解释、评论或额外内容，只需原样读出：${text}`,
+        }],
+      }),
+    });
+
+    if (!response.ok) {
+      // 降级到直接 TTS
+      return await synthDirect(text);
+    }
+
+    const data = await response.json() as {
+      messages: Array<{
+        type: string;
+        content: string;
+        name?: string;
+      }>;
+    };
+
+    // 提取语音 URL
+    for (const msg of data.messages) {
+      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+        return NextResponse.json({
+          audioUrl: msg.content.trim(),
+          mode: 'doubao',
+        });
+      }
+    }
+
+    // 没找到语音，降级到直接 TTS
+    return await synthDirect(text);
+  } catch {
+    // 豆包智能体异常，降级
+    return await synthDirect(text);
+  }
+}
+
+/**
+ * 方式2（降级）: SDK TTSClient 直出 — 低延迟但无豆包味
  */
 async function synthDirect(text: string) {
   const client = getTTSClient();
   const result = await client.synthesize({
     uid: 'pose-coach',
     text,
-    speaker: 'zh_female_xiaohe_uranus_bigtts', // 温柔女声
+    speaker: 'zh_female_xiaohe_uranus_bigtts',
   });
   return NextResponse.json({
     audioUrl: result.audioUri,
     audioSize: result.audioSize,
     mode: 'direct',
   });
-}
-
-/**
- * 方式2: 通过豆包语音智能体（豆包自己理解+出话术+语音）
- * 延迟较高（~3秒），但更有豆包味
- */
-async function synthViaDoubaoBot(text: string) {
-  const response = await fetch(DOUBAO_VOICE_BOT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: [{ role: 'user', content: text }],
-    }),
-  });
-
-  if (!response.ok) {
-    // 降级到直接 TTS
-    return await synthDirect(text);
-  }
-
-  const data = await response.json() as {
-    messages: Array<{
-      type: string;
-      content: string;
-      name?: string;
-    }>;
-  };
-
-  // 提取语音 URL
-  for (const msg of data.messages) {
-    if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
-      return NextResponse.json({
-        audioUrl: msg.content.trim(),
-        mode: 'doubao',
-      });
-    }
-  }
-
-  // 没找到语音，降级到直接 TTS
-  return await synthDirect(text);
 }
