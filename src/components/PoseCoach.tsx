@@ -186,15 +186,19 @@ export default function PoseCoach() {
       const data = await res.json();
       const audioUrl: string | undefined = data.audioUrl;
       if (audioUrl) {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = '';
+        if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
+        try {
+          const r = await fetch(audioUrl);
+          const blob = await r.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const audio = new Audio(blobUrl);
+          audioRef.current = audio;
+          audio.onended = () => URL.revokeObjectURL(blobUrl);
+          await audio.play();
+        } catch {
+          audioRef.current = new Audio(audioUrl);
+          audioRef.current.play().catch(() => {});
         }
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
-        audio.play().catch((err) => {
-          console.warn('[TTS] speakText 播放失败:', err?.name || err);
-        });
       }
     } catch {
       // TTS 失败静默处理
@@ -300,13 +304,25 @@ export default function PoseCoach() {
       }
     }
 
-    // TTS 语音播放
+    // TTS 语音播放（fetch+blob 绕过跨域 autoplay 限制）
     if (msg.type === 'tts_ready') {
       const audioUrl = (msg.payload as { audioUrl?: string })?.audioUrl;
       if (audioUrl) {
-        if (audioRef.current) audioRef.current.pause();
-        audioRef.current = new Audio(audioUrl);
-        audioRef.current.play().catch(() => {});
+        if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
+        fetch(audioUrl)
+          .then(r => r.blob())
+          .then(blob => {
+            const blobUrl = URL.createObjectURL(blob);
+            const audio = new Audio(blobUrl);
+            audioRef.current = audio;
+            audio.onended = () => URL.revokeObjectURL(blobUrl);
+            audio.play().catch(() => {});
+          })
+          .catch(() => {
+            // fetch 失败，降级直接播放
+            audioRef.current = new Audio(audioUrl);
+            audioRef.current.play().catch(() => {});
+          });
       }
     }
 
@@ -322,19 +338,24 @@ export default function PoseCoach() {
       setVoiceMessages(prev => [...prev.slice(-20), { role: 'coach', text: payload.text }]);
     }
 
-    // 语音回复 TTS
+    // 语音回复 TTS（fetch+blob）
     if (msg.type === 'voice_reply_tts') {
       const payload = msg.payload as { audioUrl: string; text: string };
       if (payload.audioUrl) {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = '';
-        }
-        const audio = new Audio(payload.audioUrl);
-        audioRef.current = audio;
-        audio.play().catch((err) => {
-          console.warn('[TTS] 播放失败:', err?.name || err);
-        });
+        if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
+        fetch(payload.audioUrl)
+          .then(r => r.blob())
+          .then(blob => {
+            const blobUrl = URL.createObjectURL(blob);
+            const audio = new Audio(blobUrl);
+            audioRef.current = audio;
+            audio.onended = () => URL.revokeObjectURL(blobUrl);
+            audio.play().catch(() => {});
+          })
+          .catch(() => {
+            audioRef.current = new Audio(payload.audioUrl);
+            audioRef.current.play().catch(() => {});
+          });
       }
     }
 
