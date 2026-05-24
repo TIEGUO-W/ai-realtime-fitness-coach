@@ -12,7 +12,8 @@ import type { WsMessage, PoseFrame } from '../lib/ws-client';
 import { PoseAlgorithmEngine } from './pose-algorithm';
 import { generateCoaching } from './coaching-engine';
 import { generateQuickCoaching, generateIdleCoaching, getExerciseName } from './coaching-templates';
-import { TTSClient, Config } from 'coze-coding-dev-sdk';
+import { parseVoiceCommand, getVoiceCommandReply } from './voice-command';
+import { TTSClient, ASRClient, Config } from 'coze-coding-dev-sdk';
 
 const ALGORITHM_INTERVAL_MS = 100;    // 算法推送频率 ~10fps
 const QUICK_COACH_INTERVAL_MS = 3000; // 快速话术频率 ~每3秒
@@ -29,6 +30,15 @@ function getTTSClient(): TTSClient {
     ttsClient = new TTSClient(new Config());
   }
   return ttsClient;
+}
+
+// SDK ASRClient
+let asrClient: ASRClient | null = null;
+function getASRClient(): ASRClient {
+  if (!asrClient) {
+    asrClient = new ASRClient(new Config());
+  }
+  return asrClient;
 }
 
 export function handleCoachingConnection(ws: WebSocket): void {
@@ -61,6 +71,89 @@ export function handleCoachingConnection(ws: WebSocket): void {
       currentExercise = (msg.payload as { exercise: string }).exercise || 'squat';
       algorithm.reset();
       prevRepCount = 0;
+      return;
+    }
+
+    // 语音命令：前端发来录音 base64 → ASR → 解析意图 → 执行 + 回复
+    if (msg.type === 'voice_command') {
+      const payload = msg.payload as { base64Data?: string; text?: string };
+      try {
+        let recognizedText = payload.text || '';
+
+        // 有 base64 音频数据 → 走 ASR 识别
+        if (payload.base64Data && !recognizedText) {
+          const asr = getASRClient();
+          const asrResult = await asr.recognize({
+            uid: 'pose-coach-user',
+            base64Data: payload.base64Data,
+          });
+          recognizedText = asrResult.text;
+          console.log('[coaching] ASR识别:', recognizedText);
+        }
+
+        if (!recognizedText) {
+          safeSend(ws, { type: 'voice_reply', payload: { text: '没听清，再说一遍？', audioUrl: null } });
+          return;
+        }
+
+        // 前端显示识别的文字
+        safeSend(ws, { type: 'voice_recognized', payload: { text: recognizedText } });
+
+        // 解析意图
+        const intent = parseVoiceCommand(recognizedText);
+        console.log('[coaching] 语音意图:', intent.action, intent);
+
+        // 执行意图
+        if (intent.action === 'switch_exercise') {
+          currentExercise = intent.exercise;
+          algorithm.reset();
+          prevRepCount = 0;
+          safeSend(ws, { type: 'set_exercise', payload: { exercise: intent.exercise } });
+        } else if (intent.action === 'reset') {
+          algorithm.reset();
+          prevRepCount = 0;
+        }
+
+        // 快速回复（模板话术 + SDK TTS）
+        const quickReply = getVoiceCommandReply(intent, {
+          exercise: currentExercise,
+          repCount: prevRepCount,
+          stage: latestAlgorithmResult?.stage || 'neutral',
+        });
+
+        if (quickReply) {
+          safeSend(ws, {
+            type: 'voice_reply',
+            payload: { text: quickReply, audioUrl: null },
+          });
+          // 快速 TTS
+          const audioUrl = await synthQuick(quickReply);
+          if (audioUrl) {
+            safeSend(ws, {
+              type: 'voice_reply_tts',
+              payload: { audioUrl, text: quickReply },
+            });
+          }
+        } else {
+          // 聊天类 → 交给豆包智能体回复
+          const chatReply = await askDoubaoChat(recognizedText, currentExercise);
+          if (chatReply.text || chatReply.audioUrl) {
+            safeSend(ws, {
+              type: 'voice_reply',
+              payload: { text: chatReply.text, audioUrl: chatReply.audioUrl },
+            });
+            if (chatReply.audioUrl) {
+              safeSend(ws, {
+                type: 'voice_reply_tts',
+                payload: { audioUrl: chatReply.audioUrl, text: chatReply.text },
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[coaching] 语音命令处理异常:', err);
+        safeSend(ws, { type: 'voice_reply', payload: { text: '出了点问题，再试一次？', audioUrl: null } });
+      }
       return;
     }
 
@@ -374,5 +467,57 @@ async function askLegacyCoach(
 function safeSend(ws: WebSocket, msg: WsMessage): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(msg));
+  }
+}
+
+/**
+ * 豆包聊天：用户语音闲聊 → 豆包用教练人格回复
+ */
+async function askDoubaoChat(
+  userText: string,
+  exercise: string,
+): Promise<{ text: string; audioUrl: string | null }> {
+  const COACH_PERSONA = `你是我的运动搭子教练"豆包"，性格又贱又暖、嘴毒心软。说话风格：东北话+网络梗，骚气但不过分，像兄弟/闺蜜在旁边一边怼你一边加油。用户在运动间隙跟你聊天，用1-2句骚话回应，别超过40字。必须用语音回复（synthesize_speech工具）。`;
+
+  try {
+    const response = await fetch(DOUBAO_COACH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{
+          role: 'user',
+          content: `${COACH_PERSONA}\n\n【用户说】${userText}\n【当前运动】${getExerciseName(exercise)}`,
+        }],
+      }),
+    });
+
+    if (!response.ok) {
+      return { text: '豆包走神了，你继续练！', audioUrl: null };
+    }
+
+    const data = await response.json() as {
+      messages: Array<{
+        type: string;
+        content: string;
+        name?: string;
+      }>;
+    };
+
+    let audioUrl: string | null = null;
+    let coachText = '';
+
+    for (const msg of data.messages) {
+      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+        audioUrl = msg.content.trim();
+      }
+      if (msg.type === 'ai' && msg.content && !msg.name) {
+        coachText = msg.content.trim();
+      }
+    }
+
+    return { text: coachText || '嗯嗯继续练！', audioUrl };
+  } catch (err) {
+    console.error('[coaching] 豆包聊天异常:', err);
+    return { text: '豆包掉线了，你先练着！', audioUrl: null };
   }
 }

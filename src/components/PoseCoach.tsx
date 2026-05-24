@@ -87,6 +87,8 @@ export default function PoseCoach() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [modelReady, setModelReady] = useState(false);
   const [effectFlash, setEffectFlash] = useState<'perfect' | 'excellent' | 'good' | 'adjust' | 'warning' | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceMessages, setVoiceMessages] = useState<Array<{ role: 'user' | 'coach'; text: string }>>([]);
 
   // ─── 模型预热：页面加载后自动初始化 MediaPipe，常驻内存 ───
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -296,6 +298,36 @@ export default function PoseCoach() {
         if (audioRef.current) audioRef.current.pause();
         audioRef.current = new Audio(payload.audioUrl);
         audioRef.current.play().catch(() => {});
+      }
+    }
+
+    // 语音识别结果
+    if (msg.type === 'voice_recognized') {
+      const payload = msg.payload as { text: string };
+      setVoiceMessages(prev => [...prev.slice(-20), { role: 'user', text: payload.text }]);
+    }
+
+    // 语音命令回复
+    if (msg.type === 'voice_reply') {
+      const payload = msg.payload as { text: string; audioUrl: string | null };
+      setVoiceMessages(prev => [...prev.slice(-20), { role: 'coach', text: payload.text }]);
+    }
+
+    // 语音回复 TTS
+    if (msg.type === 'voice_reply_tts') {
+      const payload = msg.payload as { audioUrl: string; text: string };
+      if (payload.audioUrl) {
+        if (audioRef.current) audioRef.current.pause();
+        audioRef.current = new Audio(payload.audioUrl);
+        audioRef.current.play().catch(() => {});
+      }
+    }
+
+    // 语音切换运动
+    if (msg.type === 'set_exercise') {
+      const payload = msg.payload as { exercise: string };
+      if (payload.exercise) {
+        setSelectedExercise(payload.exercise as ExerciseId);
       }
     }
   }, [speakFeedback]);
@@ -521,6 +553,54 @@ export default function PoseCoach() {
     if (isRunning) handleStop();
     setSource(newSource);
   }, [isRunning, handleStop]);
+
+  // ===== 语音交互 =====
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e: BlobEvent) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        // 转 base64 发送到后端 ASR
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          if (base64 && wsRef.current) {
+            wsRef.current.send({
+              type: 'voice_command',
+              payload: { base64Data: base64 },
+            });
+          }
+        };
+        reader.readAsDataURL(blob);
+        setIsRecording(false);
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (err) {
+      console.error('麦克风访问失败:', err);
+      setIsRecording(false);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+  }, []);
 
   const qualityColor = { good: 'text-[#22D3A7]', warning: 'text-[#FF6B35]', error: 'text-[#FF4757]' }[quality];
   const qualityBg = {
@@ -857,6 +937,49 @@ export default function PoseCoach() {
               </div>
             )}
           </ScrollArea>
+        </div>
+
+        {/* 语音交互区 */}
+        <div className="border-t border-[#1A1D27] px-5 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-medium text-[#8B8FA3]">语音交互</span>
+            <span className="text-[10px] text-[#8B8FA3]/50">按住说话，松开发送</span>
+          </div>
+          {/* 对话气泡 */}
+          <div className="max-h-[120px] overflow-y-auto space-y-1.5 mb-2">
+            {voiceMessages.length === 0 ? (
+              <div className="text-center text-[10px] text-[#8B8FA3]/40 py-2">试试说"换深蹲""做了多少个"</div>
+            ) : (
+              voiceMessages.slice(-6).map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                    m.role === 'user'
+                      ? 'bg-[#FF6B35]/20 text-[#FF6B35]'
+                      : 'bg-[#1A1D27] text-[#E8E9ED]'
+                  }`}>
+                    {m.text}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {/* 麦克风按钮 */}
+          <button
+            onMouseDown={startRecording}
+            onMouseUp={stopRecording}
+            onTouchStart={startRecording}
+            onTouchEnd={stopRecording}
+            className={`w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-all ${
+              isRecording
+                ? 'bg-[#FF4757] text-white shadow-[0_0_20px_rgba(255,71,87,0.4)] scale-105'
+                : 'bg-[#1A1D27] text-[#8B8FA3] hover:bg-[#252836] hover:text-[#E8E9ED]'
+            }`}
+          >
+            <span className={`text-base ${isRecording ? 'animate-pulse' : ''}`}>
+              {isRecording ? '🔴' : '🎤'}
+            </span>
+            {isRecording ? '松开结束...' : '按住说话'}
+          </button>
         </div>
 
         {/* 架构说明 */}
