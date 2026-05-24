@@ -91,11 +91,11 @@ export function handleCoachingConnection(ws: WebSocket): void {
           const feedback = await generateCoaching(result);
           safeSend(ws, { type: 'coaching_feedback', payload: feedback });
 
-          // 话术不为空时合成 TTS
-          const ttsText = feedback.tips.length > 0
-            ? feedback.tips[0]
-            : feedback.encouragement;
-          if (ttsText && ttsText.length <= 30) {
+          // 话术不为空时合成 TTS（优先用鼓励语，更短更有力）
+          let ttsText = feedback.encouragement || (feedback.tips.length > 0 ? feedback.tips[0] : '');
+          // 截断到 60 字避免 TTS 超时
+          if (ttsText.length > 60) ttsText = ttsText.substring(0, 60);
+          if (ttsText) {
             const ttsUrl = await synthesizeTTS(ttsText);
             if (ttsUrl) {
               safeSend(ws, {
