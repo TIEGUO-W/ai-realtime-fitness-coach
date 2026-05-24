@@ -95,6 +95,29 @@ export default function PoseCoach() {
   const [poseDetected, setPoseDetected] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [remoteFps, setRemoteFps] = useState(0);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+
+  // 枚举摄像头设备
+  useEffect(() => {
+    const enumerate = async () => {
+      try {
+        // 先请求一次权限，否则 label 为空
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        tempStream.getTracks().forEach(t => t.stop());
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(d => d.kind === 'videoinput');
+        setVideoDevices(videoInputs);
+        if (videoInputs.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoInputs[0].deviceId);
+        }
+      } catch {
+        // 权限被拒绝时静默处理
+      }
+    };
+    if (source === 'local') enumerate();
+  }, [source]);
 
   // session ID
   useEffect(() => {
@@ -367,6 +390,7 @@ export default function PoseCoach() {
         },
         width: 640,
         height: 480,
+        ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
       });
 
       await camera.start();
@@ -382,7 +406,7 @@ export default function PoseCoach() {
     } finally {
       setIsLoading(false);
     }
-  }, [drawSkeleton, quality]);
+  }, [drawSkeleton, quality, selectedDeviceId]);
 
   // 远程模式启动（无需摄像头，等 RPi 发帧）
   const handleStartRemote = useCallback(() => {
@@ -523,7 +547,7 @@ export default function PoseCoach() {
                   : 'text-[#8B8FA3] hover:text-[#E8E9ED]'
               }`}
             >
-              📷 本地
+              本地
             </button>
             <button
               onClick={() => handleSourceChange('remote')}
@@ -533,9 +557,33 @@ export default function PoseCoach() {
                   : 'text-[#8B8FA3] hover:text-[#E8E9ED]'
               }`}
             >
-              📡 远程
+              远程
             </button>
           </div>
+
+          {/* 摄像头选择 */}
+          {source === 'local' && videoDevices.length > 1 && (
+            <>
+              <Separator orientation="vertical" className="h-6 bg-[#1A1D27]" />
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => {
+                  setSelectedDeviceId(e.target.value);
+                  if (isRunning) {
+                    handleStop();
+                    setTimeout(handleStartLocal, 300);
+                  }
+                }}
+                className="max-w-[160px] rounded-lg border border-[#1A1D27] bg-[#1A1D27] px-2 py-1.5 text-xs text-[#E8E9ED] outline-none focus:border-[#FF6B35]/50"
+              >
+                {videoDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `摄像头 ${videoDevices.indexOf(d) + 1}`}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
 
           <Separator orientation="vertical" className="h-6 bg-[#1A1D27]" />
 
