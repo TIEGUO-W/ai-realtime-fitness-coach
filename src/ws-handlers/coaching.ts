@@ -135,20 +135,43 @@ export function handleCoachingConnection(ws: WebSocket): void {
   });
 }
 
-// TTS 合成
+// 豆包语音智能体 TTS
+const DOUBAO_VOICE_BOT_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
+
 async function synthesizeTTS(text: string): Promise<string | null> {
   try {
-    const { TTSClient, Config } = await import('coze-coding-dev-sdk');
-    const config = new Config();
-    const client = new TTSClient(config);
-    const result = await client.synthesize({
-      uid: 'pose-coach',
-      text,
-      speaker: 'zh_male_m191_uranus_bigtts',
+    const response = await fetch(DOUBAO_VOICE_BOT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: text }],
+      }),
     });
-    return result.audioUri || null;
+
+    if (!response.ok) {
+      console.error('[coaching] Doubao voice bot error:', response.status);
+      return null;
+    }
+
+    const data = await response.json() as {
+      messages: Array<{
+        type: string;
+        content: string;
+        name?: string;
+      }>;
+    };
+
+    // 从返回消息中提取语音 URL（type=tool, name=synthesize_speech）
+    for (const msg of data.messages) {
+      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+        return msg.content.trim();
+      }
+    }
+
+    console.error('[coaching] Doubao voice bot: no audio URL found in response');
+    return null;
   } catch (err) {
-    console.error('[coaching] TTS error:', err);
+    console.error('[coaching] Doubao voice TTS error:', err);
     return null;
   }
 }
