@@ -28,3 +28,4 @@ Thumbs.db
 
 # Cache
 .turbo/
+.cozeproj/reduction
