@@ -157,3 +157,103 @@ body {
 [role="progressbar"] > div {
   background: #FF6B35 !important;
 }
+
+/* ═══ Cyberpunk Dashboard Theme ══════════════════════════════════ */
+
+@theme inline {
+  --color-cyber-cyan: #00E5FF;
+  --color-cyber-dark: #060B15;
+  --color-cyber-magenta: #FF00E5;
+}
+
+/* Neon glow utility */
+.glow-cyan {
+  box-shadow:
+    0 0 5px rgba(0, 229, 255, 0.3),
+    0 0 15px rgba(0, 229, 255, 0.1),
+    inset 0 0 5px rgba(0, 229, 255, 0.05);
+}
+
+.glow-cyan-border {
+  border-color: rgba(0, 229, 255, 0.35);
+  box-shadow:
+    0 0 6px rgba(0, 229, 255, 0.2),
+    inset 0 0 6px rgba(0, 229, 255, 0.05);
+}
+
+/* Scan line overlay for cyberpunk feel */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 50;
+}
+
+/* Chat bubble tail */
+.bubble-tail::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 16px;
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-right: 8px solid rgba(15, 23, 42, 0.9);
+}
+
+.bubble-tail-alert::before {
+  border-right-color: rgba(127, 29, 29, 0.95);
+}
+
+/* Popup slide-in animation */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Avatar glow pulse */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(0, 229, 255, 0.1); }
+  50%      { box-shadow: 0 0 28px rgba(0, 229, 255, 0.25); }
+}
+
+.avatar-glow {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+/* Heartbeat animation */
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  14% { transform: scale(1.2); }
+  28% { transform: scale(1); }
+  42% { transform: scale(1.15); }
+  56% { transform: scale(1); }
+}
+
+.animate-heartbeat {
+  animation: heartbeat 1.5s ease-in-out infinite;
+}
+
+/* Pulse dot animation */
+@keyframes pulse-dot {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.5); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}

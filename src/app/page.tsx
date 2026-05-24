@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import PoseCoach from '@/components/PoseCoach';
+import Dashboard from '@/components/dashboard/Dashboard';
 
 export const metadata: Metadata = {
   title: 'AI 运动教练 | 实时姿态分析',
@@ -7,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <PoseCoach />;
+  return <Dashboard />;
 }
