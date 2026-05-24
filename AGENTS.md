@@ -1,65 +1,96 @@
-# 项目上下文
+# AGENTS.md
 
-### 版本技术栈
+## 项目概览
 
-- **Framework**: Next.js 16 (App Router)
+AI 实时运动教练 — 边缘端骨架检测 + 云端 LLM 智能分析 + TTS 语音反馈。
+用户在浏览器中通过摄像头 + MediaPipe Pose 提取骨架坐标，通过 WebSocket 发送到云端进行 LLM 推理分析，实时返回动作指导和语音反馈。
+
+### 架构
+
+```
+浏览器 (MediaPipe Pose) → WebSocket → 云端 (LLM 推理 + TTS) → 反馈
+   ↑ 摄像头 + 骨架提取        ↑ 骨架 JSON ~2KB/帧     ↑ 文字 + 语音
+```
+
+核心优化：只传骨架坐标 JSON，不传视频流，极大降低带宽和延迟。
+
+## 技术栈
+
+- **Framework**: Next.js 16 (App Router + 自定义服务器)
 - **Core**: React 19
 - **Language**: TypeScript 5
-- **UI 组件**: shadcn/ui (基于 Radix UI)
-- **Styling**: Tailwind CSS 4
+- **UI**: shadcn/ui + Tailwind CSS 4
+- **WebSocket**: ws (noServer 模式，与 Next.js 共用 5000 端口)
+- **AI**: coze-coding-dev-sdk (LLMClient + TTSClient)
+- **骨架检测**: MediaPipe Pose (CDN 加载，浏览器端运行)
+- **模型**: doubao-seed-2-0-mini-260215 (低延迟快速响应)
 
 ## 目录结构
 
 ```
-├── public/                 # 静态资源
-├── scripts/                # 构建与启动脚本
-│   ├── build.sh            # 构建脚本
-│   ├── dev.sh              # 开发环境启动脚本
-│   ├── prepare.sh          # 预处理脚本
-│   └── start.sh            # 生产环境启动脚本
-├── src/
-│   ├── app/                # 页面路由与布局
-│   ├── components/ui/      # Shadcn UI 组件库
-│   ├── hooks/              # 自定义 Hooks
-│   ├── lib/                # 工具库
-│   │   └── utils.ts        # 通用工具函数 (cn)
-│   └── server.ts           # 自定义服务端入口
-├── next.config.ts          # Next.js 配置
-├── package.json            # 项目依赖管理
-└── tsconfig.json           # TypeScript 配置
+src/
+├── app/
+│   ├── api/
+│   │   ├── coaching/route.ts   # HTTP 备用教练分析 API
+│   │   └── tts/route.ts        # TTS 语音合成 API
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx                # 主页 (PoseCoach)
+├── components/
+│   ├── PoseCoach.tsx           # 核心客户端组件 (摄像头+骨架+WS+UI)
+│   └── ui/                     # shadcn/ui 组件库
+├── lib/
+│   ├── utils.ts
+│   └── ws-client.ts            # WebSocket 协议类型 + 客户端工具
+├── ws-handlers/
+│   ├── coaching.ts             # WebSocket 骨架帧处理器
+│   └── coaching-engine.ts      # LLM 教练推理引擎
+└── server.ts                   # 自定义服务器 (HTTP + WS 共 5000 端口)
 ```
 
-- 项目文件（如 app 目录、pages 目录、components 等）默认初始化到 `src/` 目录下。
+## 构建与运行
 
-## 包管理规范
+```bash
+# 开发
+pnpm dev            # → npx tsx watch src/server.ts
 
-**仅允许使用 pnpm** 作为包管理器，**严禁使用 npm 或 yarn**。
-**常用命令**：
-- 安装依赖：`pnpm add <package>`
-- 安装开发依赖：`pnpm add -D <package>`
-- 安装所有依赖：`pnpm install`
-- 移除依赖：`pnpm remove <package>`
+# 构建
+pnpm build          # → next build + tsup 编译 server.ts
 
-## 开发规范
+# 生产
+pnpm start          # → node dist/server.js
+```
 
-### 编码规范
+## 关键文件说明
 
-- 默认按 TypeScript `strict` 心智写代码；优先复用当前作用域已声明的变量、函数、类型和导入，禁止引用未声明标识符或拼错变量名。
-- 禁止隐式 `any` 和 `as any`；函数参数、返回值、解构项、事件对象、`catch` 错误在使用前应有明确类型或先完成类型收窄，并清理未使用的变量和导入。
+### server.ts
+自定义 HTTP + WebSocket 服务器。注册了 `/ws/coaching` 端点。
+开发环境不销毁未注册的 upgrade 请求（Next.js HMR 需要）。
 
-### next.config 配置规范
+### ws-handlers/coaching-engine.ts
+核心推理逻辑：提取关键关节 → 计算角度和指标 → 调用 LLM → 返回结构化反馈。
+每 2.5 秒分析一次积累的骨架帧，使用 mini 模型降低延迟。
 
-- 配置的路径不要写死绝对路径，必须使用 path.resolve(__dirname, ...)、import.meta.dirname 或 process.cwd() 动态拼接。
+### components/PoseCoach.tsx
+前端核心组件：
+- 通过 CDN 动态加载 MediaPipe Pose
+- 摄像头画面 + Canvas 骨架叠加（镜像翻转）
+- WebSocket 实时通信
+- 教练反馈面板 + TTS 语音播放
+- 7种运动模式切换
 
-### Hydration 问题防范
+## API 接口
 
-1. 严禁在 JSX 渲染逻辑中直接使用 typeof window、Date.now()、Math.random() 等动态数据。**必须使用 'use client' 并配合 useEffect + useState 确保动态内容仅在客户端挂载后渲染**；同时严禁非法 HTML 嵌套（如 <p> 嵌套 <div>）。
-2. **禁止使用 head 标签**，优先使用 metadata，详见文档：https://nextjs.org/docs/app/api-reference/functions/generate-metadata
-   1. 三方 CSS、字体等资源可在 `globals.css` 中顶部通过 `@import` 引入或使用 next/font
-   2. preload, preconnect, dns-prefetch 通过 ReactDOM 的 preload、preconnect、dns-prefetch 方法引入
-   3. json-ld 可阅读 https://nextjs.org/docs/app/guides/json-ld
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/ws/coaching` | WebSocket | 实时骨架分析（主通道） |
+| `/api/coaching` | POST | HTTP 备用教练分析 |
+| `/api/tts` | POST | TTS 语音合成 |
 
-## UI 设计与组件规范 (UI & Styling Standards)
+## 编码规范
 
-- 模板默认预装核心组件库 `shadcn/ui`，位于`src/components/ui/`目录下
-- Next.js 项目**必须默认**采用 shadcn/ui 组件、风格和规范，**除非用户指定用其他的组件和规范。**
+- 严格 TypeScript，禁止隐式 any
+- WebSocket 消息统一 `{ type, payload }` 格式
+- LLM/TTS 必须通过后端调用 coze-coding-dev-sdk，禁止前端直调
+- 客户端组件必须 'use client'，摄像头/MediaPipe 逻辑全在 useEffect 中
+- MediaPipe 通过 CDN 动态加载，不走 npm 包（避免 WASM 路径问题）
