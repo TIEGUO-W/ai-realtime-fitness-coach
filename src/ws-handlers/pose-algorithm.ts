@@ -194,6 +194,8 @@ export class PoseAlgorithmEngine {
     previousPrimary: number | null;
     lastPrimaryDelta: number | null;
     lastHighKneeSide: string | null;
+    hadDownPhase: boolean;
+    stageConfirmCount: number;
   }> = {};
 
   // 自适应标定
@@ -224,6 +226,8 @@ export class PoseAlgorithmEngine {
         previousPrimary: null,
         lastPrimaryDelta: null,
         lastHighKneeSide: null,
+        hadDownPhase: false,
+        stageConfirmCount: 0,
       };
     }
     return this.states[exercise];
@@ -580,30 +584,44 @@ export class PoseAlgorithmEngine {
 
   private updateCounter(exercise: string, stage: ExerciseStage, st: ReturnType<typeof this.state>): boolean {
     if (stage === 'unknown') return false;
-    if (exercise === 'plank') return false;
+    if (exercise === 'plank') return false; // 平板支撑不计次
 
+    // 防抖：同一阶段需要连续3帧确认
     if (stage !== st.previousStage) {
-      st.stagePath.push(stage);
-      st.stagePath = st.stagePath.slice(-8);
+      st.stageConfirmCount = 1;
+      return false;
     }
+    st.stageConfirmCount = (st.stageConfirmCount ?? 0) + 1;
+    if (st.stageConfirmCount < 3) return false;
+
+    // 简化计数：回到"上"阶段 且 之前经过"下"阶段 = 完成一次
+    const isUpStage = (s: ExerciseStage) =>
+      s === 'standing' || s === 'up' || s === 'closed' || s === 'neutral';
+    const isDownStage = (s: ExerciseStage) =>
+      s === 'descending' || s === 'bottom' || s === 'open' ||
+      s === 'left_knee_up' || s === 'right_knee_up';
 
     let completed = false;
-    if (exercise === 'squat' || exercise === 'lunge') {
-      completed = containsOrderedSequence(st.stagePath, ['standing', 'descending', 'bottom', 'ascending', 'standing']);
-    } else if (exercise === 'push_up') {
-      completed = containsOrderedSequence(st.stagePath, ['up', 'descending', 'bottom', 'ascending', 'up']);
-    } else if (exercise === 'jumping_jack') {
-      completed = containsOrderedSequence(st.stagePath, ['closed', 'open', 'closed']);
-    } else if (exercise === 'high_knees') {
-      const lastSide = st.lastHighKneeSide;
+
+    if (exercise === 'high_knees') {
+      // 高抬腿：左右交替算一次
       const currentSide = stage === 'left_knee_up' ? 'left' : stage === 'right_knee_up' ? 'right' : null;
-      completed = currentSide !== null && lastSide !== null && currentSide !== lastSide;
+      completed = currentSide !== null && st.lastHighKneeSide !== null && currentSide !== st.lastHighKneeSide;
       if (currentSide !== null) st.lastHighKneeSide = currentSide;
+    } else {
+      // 其他运动：down → up = 完成一次
+      const wasDown = st.hadDownPhase;
+      if (isDownStage(stage)) {
+        st.hadDownPhase = true;
+      } else if (isUpStage(stage) && wasDown) {
+        completed = true;
+        st.hadDownPhase = false;
+      }
     }
 
     if (completed) {
       st.repCount += 1;
-      st.stagePath = [stage];
+      st.hadDownPhase = false;
       console.log(`[${exercise}] REP #${st.repCount}!`);
     }
     return completed;
@@ -708,7 +726,7 @@ export class PoseAlgorithmEngine {
   }
 
   private shallowTurnaround(stage: ExerciseStage, st: ReturnType<typeof this.state>): boolean {
-    return stage === 'ascending' && st.stagePath.includes('descending') && !st.stagePath.includes('bottom');
+    return stage === 'ascending' && st.hadDownPhase && st.previousStage === 'descending';
   }
 
   private pushUpHipsSag(kp: Record<string, CleanKP>): boolean {

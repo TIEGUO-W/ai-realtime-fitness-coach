@@ -207,6 +207,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
         const qualityUrgent = result.quality.qualityScore < 50; // 动作严重错误
 
         if (justCompletedRep || qualityUrgent || (now - lastQuickCoach >= QUICK_COACH_INTERVAL_MS)) {
+          console.log(`[coaching] 触发话术: repCount=${result.repCount} prevRepCount=${prevRepCount} completedRep=${result.completedRep} quality=${result.quality.qualityScore} stage=${result.stage}`);
           lastQuickCoach = now;
           const qualityLevel = result.quality.qualityScore >= 90 ? 'perfect' as const
             : result.quality.qualityScore >= 75 ? 'good' as const
