@@ -135,45 +135,73 @@ export function handleCoachingConnection(ws: WebSocket): void {
   });
 }
 
-// 豆包语音智能体 TTS
+// TTS: SDK 直出（一字不差，低延迟 ~1秒）
+// 也可通过环境变量 TTS_MODE=doubao 切换为豆包智能体（豆包自己理解+出话术）
+import { TTSClient, Config } from 'coze-coding-dev-sdk';
+
+let ttsClient: TTSClient | null = null;
+function getTTSClient(): TTSClient {
+  if (!ttsClient) {
+    ttsClient = new TTSClient(new Config());
+  }
+  return ttsClient;
+}
+
 const DOUBAO_VOICE_BOT_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
+const TTS_MODE = process.env.TTS_MODE || 'direct'; // 'direct' 或 'doubao'
 
 async function synthesizeTTS(text: string): Promise<string | null> {
+  const trimmed = text.slice(0, 200);
+
   try {
-    const response = await fetch(DOUBAO_VOICE_BOT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: text }],
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('[coaching] Doubao voice bot error:', response.status);
-      return null;
+    if (TTS_MODE === 'doubao') {
+      // 豆包智能体模式：豆包自己理解并回复（延迟 ~3秒，但更有豆包味）
+      return await synthViaDoubao(trimmed);
+    } else {
+      // SDK 直出模式：一字不差转语音（延迟 ~1秒，精确可控）
+      return await synthDirect(trimmed);
     }
-
-    const data = await response.json() as {
-      messages: Array<{
-        type: string;
-        content: string;
-        name?: string;
-      }>;
-    };
-
-    // 从返回消息中提取语音 URL（type=tool, name=synthesize_speech）
-    for (const msg of data.messages) {
-      if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
-        return msg.content.trim();
-      }
-    }
-
-    console.error('[coaching] Doubao voice bot: no audio URL found in response');
-    return null;
   } catch (err) {
-    console.error('[coaching] Doubao voice TTS error:', err);
+    console.error('[coaching] TTS error:', err);
+    // 降级：如果豆包模式失败，尝试直出
+    if (TTS_MODE === 'doubao') {
+      try { return await synthDirect(trimmed); } catch { return null; }
+    }
     return null;
   }
+}
+
+async function synthDirect(text: string): Promise<string | null> {
+  const client = getTTSClient();
+  const result = await client.synthesize({
+    uid: 'pose-coach',
+    text,
+    speaker: 'zh_female_xiaohe_uranus_bigtts',
+  });
+  return result.audioUri;
+}
+
+async function synthViaDoubao(text: string): Promise<string | null> {
+  const response = await fetch(DOUBAO_VOICE_BOT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: text }],
+    }),
+  });
+
+  if (!response.ok) return null;
+
+  const data = await response.json() as {
+    messages: Array<{ type: string; content: string; name?: string }>;
+  };
+
+  for (const msg of data.messages) {
+    if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+      return msg.content.trim();
+    }
+  }
+  return null;
 }
 
 function safeSend(ws: WebSocket, msg: WsMessage): void {
