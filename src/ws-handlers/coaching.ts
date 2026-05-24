@@ -1,28 +1,28 @@
 /**
  * WebSocket 浏览器端处理器 — 本地模式
  * 
- * 架构:
- * 1. 每帧 → 规则算法（毫秒级）→ 实时推送算法结果（计数/阶段/质量/特效）
- * 2. 每 5 秒 → 豆包智能体当教练（收到运动状态 → 自己出话术 + 语音，一步到位）
+ * 双层话术架构（速度优先 + 深度补充）:
  * 
- * 豆包教练模式：
- *   不再让 LLM 先生成干巴巴的话术再让豆包念，
- *   而是直接把算法状态喂给豆包，让它用自己的教练人格出话术+语音
+ * 1. 实时层（~1-2秒）：规则算法 → 骚话模板库（毫秒级出话术）→ SDK TTSClient 快速合成语音
+ * 2. 深度层（~30秒）：豆包智能体 → 用教练人格出深度点评 + 豆包音色语音
  */
 
 import type { WebSocket } from 'ws';
 import type { WsMessage, PoseFrame } from '../lib/ws-client';
 import { PoseAlgorithmEngine } from './pose-algorithm';
 import { generateCoaching } from './coaching-engine';
+import { generateQuickCoaching, generateIdleCoaching, getExerciseName } from './coaching-templates';
 import { TTSClient, Config } from 'coze-coding-dev-sdk';
 
-const ALGORITHM_INTERVAL_MS = 100;   // 算法推送频率 ~10fps
-const COACH_INTERVAL_MS = 5000;      // 豆包教练频率 ~每5秒（豆包需要思考时间）
+const ALGORITHM_INTERVAL_MS = 100;    // 算法推送频率 ~10fps
+const QUICK_COACH_INTERVAL_MS = 3000; // 快速话术频率 ~每3秒
+const DEEP_COACH_INTERVAL_MS = 30000; // 豆包深度点评 ~每30秒
+const IDLE_THRESHOLD_MS = 10000;      // 空闲阈值 ~10秒没动
 
 const DOUBAO_COACH_URL = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
-const COACH_MODE = process.env.COACH_MODE || 'doubao'; // 'doubao'(豆包当教练) 或 'legacy'(旧LLM+TTS模式)
+const COACH_MODE = process.env.COACH_MODE || 'hybrid'; // 'hybrid'(快速+深度) / 'doubao'(纯豆包) / 'legacy'(旧LLM+TTS)
 
-// SDK TTSClient 降级备用
+// SDK TTSClient
 let ttsClient: TTSClient | null = null;
 function getTTSClient(): TTSClient {
   if (!ttsClient) {
@@ -31,20 +31,17 @@ function getTTSClient(): TTSClient {
   return ttsClient;
 }
 
-// 运动名称映射
-const EXERCISE_NAMES: Record<string, string> = {
-  squat: '深蹲', deadlift: '硬拉', pushup: '俯卧撑',
-  lunge: '弓步蹲', plank: '平板支撑', highknees: '高抬腿', jumpingjack: '开合跳',
-};
-
 export function handleCoachingConnection(ws: WebSocket): void {
   const algorithm = new PoseAlgorithmEngine();
   let currentExercise = 'squat';
 
   let lastAlgorithmPush = 0;
-  let lastCoachCall = 0;
+  let lastQuickCoach = 0;
+  let lastDeepCoach = 0;
+  let lastActivityTime = Date.now();
   let latestAlgorithmResult: ReturnType<PoseAlgorithmEngine['analyze']> | null = null;
-  let coachBusy = false; // 防止豆包还没回复又发请求
+  let prevRepCount = 0;
+  let deepCoachBusy = false;
 
   ws.on('message', async (raw: Buffer) => {
     let msg: WsMessage;
@@ -63,6 +60,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
     if (msg.type === 'set_exercise') {
       currentExercise = (msg.payload as { exercise: string }).exercise || 'squat';
       algorithm.reset();
+      prevRepCount = 0;
       return;
     }
 
@@ -70,6 +68,8 @@ export function handleCoachingConnection(ws: WebSocket): void {
     if (msg.type === 'pose_frame') {
       const frame = msg.payload as PoseFrame;
       if (!frame.landmarks || frame.landmarks.length < 28) return;
+
+      lastActivityTime = Date.now();
 
       // 规则算法（毫秒级）
       const result = algorithm.analyze(frame.landmarks, currentExercise);
@@ -107,17 +107,76 @@ export function handleCoachingConnection(ws: WebSocket): void {
         });
       }
 
-      // 定时调用豆包教练（~每5秒）
-      if (now - lastCoachCall >= COACH_INTERVAL_MS && !coachBusy) {
-        lastCoachCall = now;
-        coachBusy = true;
+      // ===== 实时层：快速话术（~1-2秒出语音） =====
+      if (COACH_MODE === 'hybrid') {
+        // 完成一次动作 → 立即出话（不等定时器）
+        const justCompletedRep = result.repCount > prevRepCount;
+        const qualityUrgent = result.quality.qualityScore < 50; // 动作严重错误
 
-        if (COACH_MODE === 'doubao') {
-          askDoubaoCoach(ws, result).finally(() => { coachBusy = false; });
-        } else {
-          askLegacyCoach(ws, result).finally(() => { coachBusy = false; });
+        if (justCompletedRep || qualityUrgent || (now - lastQuickCoach >= QUICK_COACH_INTERVAL_MS)) {
+          lastQuickCoach = now;
+          const qualityLevel = result.quality.qualityScore >= 90 ? 'perfect' as const
+            : result.quality.qualityScore >= 75 ? 'good' as const
+            : result.quality.qualityScore >= 50 ? 'adjust' as const
+            : result.quality.qualityScore >= 30 ? 'warning' as const : 'error' as const;
+
+          const coaching = generateQuickCoaching(
+            result.exercise, result.stage, qualityLevel,
+            result.repCount, prevRepCount,
+          );
+
+          if (coaching.text) {
+            // 推送话术文本
+            safeSend(ws, {
+              type: 'coaching_feedback',
+              payload: {
+                exercise: result.exercise,
+                repCount: result.repCount,
+                stage: result.stage,
+                quality: qualityLevel,
+                effect: result.effect,
+                tips: [coaching.text],
+                encouragement: '',
+              },
+            });
+
+            // 快速 TTS（SDK 直出，1-2秒）
+            synthQuick(coaching.text).then(audioUrl => {
+              if (audioUrl) {
+                safeSend(ws, {
+                  type: 'tts_ready',
+                  payload: { audioUrl, text: coaching.text },
+                });
+              }
+            });
+          }
+
+          prevRepCount = result.repCount;
+        }
+
+        // ===== 深度层：豆包智能体（~30秒深度点评） =====
+        if (now - lastDeepCoach >= DEEP_COACH_INTERVAL_MS && !deepCoachBusy) {
+          lastDeepCoach = now;
+          deepCoachBusy = true;
+          askDoubaoDeepCoach(ws, result).finally(() => { deepCoachBusy = false; });
+        }
+
+      } else if (COACH_MODE === 'doubao') {
+        // 纯豆包模式（慢但骚）
+        if (now - lastQuickCoach >= 5000 && !deepCoachBusy) {
+          lastQuickCoach = now;
+          deepCoachBusy = true;
+          askDoubaoDeepCoach(ws, result).finally(() => { deepCoachBusy = false; });
+        }
+
+      } else {
+        // 旧模式降级
+        if (now - lastQuickCoach >= QUICK_COACH_INTERVAL_MS) {
+          lastQuickCoach = now;
+          askLegacyCoach(ws, result);
         }
       }
+
       return;
     }
 
@@ -134,50 +193,92 @@ export function handleCoachingConnection(ws: WebSocket): void {
         }
       }
       if (latestAlgorithmResult) {
-        if (COACH_MODE === 'doubao') {
-          askDoubaoCoach(ws, latestAlgorithmResult);
-        } else {
-          const feedback = await generateCoaching(latestAlgorithmResult);
-          safeSend(ws, { type: 'coaching_feedback', payload: feedback });
-        }
+        const feedback = await generateCoaching(latestAlgorithmResult);
+        safeSend(ws, { type: 'coaching_feedback', payload: feedback });
       }
     }
   });
 
+  // 空闲检测
+  const idleTimer = setInterval(() => {
+    if (ws.readyState !== ws.OPEN) {
+      clearInterval(idleTimer);
+      return;
+    }
+    const idle = Date.now() - lastActivityTime;
+    if (idle > IDLE_THRESHOLD_MS && idle < IDLE_THRESHOLD_MS + 2000) {
+      // 刚超过空闲阈值，说一句
+      const text = generateIdleCoaching();
+      safeSend(ws, {
+        type: 'coaching_feedback',
+        payload: {
+          exercise: currentExercise,
+          repCount: prevRepCount,
+          stage: 'neutral',
+          quality: 'good' as const,
+          effect: null,
+          tips: [text],
+          encouragement: '',
+        },
+      });
+      synthQuick(text).then(audioUrl => {
+        if (audioUrl) {
+          safeSend(ws, {
+            type: 'tts_ready',
+            payload: { audioUrl, text },
+          });
+        }
+      });
+    }
+  }, 5000);
+
   ws.on('close', () => {
     algorithm.reset();
+    clearInterval(idleTimer);
   });
 }
 
 /**
- * 豆包教练模式：把运动状态直接喂给豆包智能体
- * 豆包自己用教练人格出话术 + 语音，一步到位
+ * 快速 TTS：SDK TTSClient 直出（1-2秒，无豆包味但快）
  */
-async function askDoubaoCoach(
+async function synthQuick(text: string): Promise<string | null> {
+  try {
+    const client = getTTSClient();
+    const result = await client.synthesize({
+      uid: 'pose-coach-quick',
+      text,
+      speaker: 'zh_female_xiaohe_uranus_bigtts',
+    });
+    return result.audioUri;
+  } catch (err) {
+    console.error('[coaching] 快速TTS失败:', err);
+    return null;
+  }
+}
+
+/**
+ * 豆包深度教练：每30秒来一段深度点评（骚话+豆包音色）
+ */
+async function askDoubaoDeepCoach(
   ws: WebSocket,
   result: ReturnType<PoseAlgorithmEngine['analyze']>
 ): Promise<void> {
-  const exerciseName = EXERCISE_NAMES[result.exercise] || result.exercise;
+  const exerciseName = getExerciseName(result.exercise);
   const stageDesc: Record<string, string> = {
     standing: '站立准备', ascending: '上升中', descending: '下放中',
     bottom: '最低点', holding: '保持中', extended: '展开', contracted: '收缩',
-    up: '抬腿中', down: '放腿中', left: '向左', right: '向右',
-    neutral: '中立位',
+    up: '抬腿中', down: '放腿中', neutral: '中立位',
   };
 
-  // 豆包教练人设：骚话运动搭子
-  const COACH_PERSONA = `你是我的运动搭子教练"豆包"，性格又贱又暖、嘴毒心软。说话风格：东北话+网络梗，骚气但不过分，像兄弟/闺蜜在旁边一边怼你一边加油。规则：1.根据运动状态给出1-2句短反馈，别超过30字 2.做对了就骚夸，做错了就毒舌提醒 3.绝对不要重复之前说过的话 4.不要加任何解释说明，直接出骚话 5.必须用语音回复（用synthesize_speech工具）`;
+  const COACH_PERSONA = `你是我的运动搭子教练"豆包"，性格又贱又暖、嘴毒心软。说话风格：东北话+网络梗，骚气但不过分，像兄弟/闺蜜在旁边一边怼你一边加油。你现在是每30秒一次的深度点评，给2-3句总结。规则：1.总结最近运动表现，骚气点评 2.指出最需要改进的一点 3.鼓励继续 4.别超过50字 5.必须用语音回复（用synthesize_speech工具）`;
 
-  // 构建运动状态描述
   const stateDesc = [
     `运动：${exerciseName}`,
-    `次数：第${result.repCount}次`,
+    `已完成：${result.repCount}次`,
     `阶段：${stageDesc[result.stage] || result.stage}`,
     `质量评分：${result.quality.qualityScore}分`,
-    result.quality.errors.length > 0 ? `错误：${result.quality.errors.join('、')}` : '',
-    result.quality.warnings.length > 0 ? `警告：${result.quality.warnings.join('、')}` : '',
-    `膝盖角度：${Math.round(result.angles.kneeAngle || 0)}度`,
-    `髋部角度：${Math.round(result.angles.hipAngle || 0)}度`,
+    result.quality.errors.length > 0 ? `主要问题：${result.quality.errors[0]}` : '动作比较标准',
+    result.quality.warnings.length > 0 ? `注意：${result.quality.warnings[0]}` : '',
   ].filter(Boolean).join('，');
 
   try {
@@ -193,9 +294,7 @@ async function askDoubaoCoach(
     });
 
     if (!response.ok) {
-      // 降级到旧模式
-      await askLegacyCoach(ws, result);
-      return;
+      return; // 深度点评失败不影响实时层
     }
 
     const data = await response.json() as {
@@ -209,18 +308,15 @@ async function askDoubaoCoach(
     let audioUrl: string | null = null;
     let coachText = '';
 
-    // 提取豆包的教练话术和语音
     for (const msg of data.messages) {
       if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
         audioUrl = msg.content.trim();
       }
-      // 豆包的回复文本（AI message，不是 human 也不是 tool）
       if (msg.type === 'ai' && msg.content && !msg.name) {
         coachText = msg.content.trim();
       }
     }
 
-    // 推送教练反馈（兼容前端现有格式）
     if (coachText || audioUrl) {
       safeSend(ws, {
         type: 'coaching_feedback',
@@ -236,7 +332,6 @@ async function askDoubaoCoach(
         },
       });
 
-      // 推送语音
       if (audioUrl) {
         safeSend(ws, {
           type: 'tts_ready',
@@ -245,8 +340,7 @@ async function askDoubaoCoach(
       }
     }
   } catch (err) {
-    console.error('[coaching] 豆包教练异常，降级到旧模式:', err);
-    await askLegacyCoach(ws, result);
+    console.error('[coaching] 豆包深度点评异常:', err);
   }
 }
 
@@ -264,7 +358,7 @@ async function askLegacyCoach(
     let ttsText = feedback.encouragement || (feedback.tips.length > 0 ? feedback.tips[0] : '');
     if (ttsText.length > 60) ttsText = ttsText.substring(0, 60);
     if (ttsText) {
-      const ttsUrl = await synthDirect(ttsText);
+      const ttsUrl = await synthQuick(ttsText);
       if (ttsUrl) {
         safeSend(ws, {
           type: 'tts_ready',
@@ -274,23 +368,6 @@ async function askLegacyCoach(
     }
   } catch (err) {
     console.error('[coaching] 旧模式教练异常:', err);
-  }
-}
-
-/**
- * SDK TTSClient 直出（降级用，无豆包味）
- */
-async function synthDirect(text: string): Promise<string | null> {
-  try {
-    const client = getTTSClient();
-    const result = await client.synthesize({
-      uid: 'pose-coach',
-      text,
-      speaker: 'zh_female_xiaohe_uranus_bigtts',
-    });
-    return result.audioUri;
-  } catch {
-    return null;
   }
 }
 
