@@ -930,6 +930,24 @@ export default function PoseCoach() {
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#FF6B35]/10 text-sm">🤖</div>
         </div>
 
+        {/* 扫码连接健康数据 */}
+        <div className="border-b border-[#1A1D27] px-5 py-3">
+          <div className="flex items-center gap-3">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/health` : '/health')}&bgcolor=0F1117&color=E8E9ED`}
+              alt="扫码连接健康数据"
+              className="h-20 w-20 rounded-lg border border-[#1A1D27]"
+            />
+            <div>
+              <div className="text-xs font-medium">扫码连接健康数据</div>
+              <div className="text-[10px] text-[#8B8FA3] mt-0.5">
+                手机扫码 → 填资料 → 授权 Apple Health<br />
+                教练会根据你的身体状况调整训练
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* 当前反馈 */}
         <div className="border-b border-[#1A1D27] px-5 py-4">
           {currentFeedback ? (
