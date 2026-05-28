@@ -5,7 +5,6 @@ import { WebSocketServer } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
 import { handleCoachingConnection } from './ws-handlers/coaching';
-import { setupCameraHandler } from './ws-handlers/camera';
 
 const dev = process.env.COZE_PROJECT_ENV !== 'PROD';
 const hostname = process.env.HOSTNAME || 'localhost';
@@ -40,8 +39,6 @@ function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
 // /ws/coaching — 浏览器连接（本地模式骨架帧 + 教练反馈）
 const coachingWss = registerWsEndpoint('/ws/coaching');
 coachingWss.on('connection', (ws) => handleCoachingConnection(ws));
-// /ws/camera — 树莓派连接（JPEG 帧流 → 服务端骨架检测 → 推流给浏览器）
-setupCameraHandler(registerWsEndpoint('/ws/camera'));
 
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {

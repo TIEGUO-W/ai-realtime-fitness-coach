@@ -26,7 +26,7 @@ export interface PoseBatchPayload {
   sessionId: string;
 }
 
-// 浏览器设置运动类型（远程模式时传给服务端）
+// 浏览器设置运动类型
 export interface SetExercisePayload {
   exercise: string;
 }
@@ -64,24 +64,6 @@ export interface TTSReadyPayload {
   audioUrl: string;
   text: string;
   priority?: 'high' | 'medium' | 'low';
-}
-
-// 远程帧数据（服务端骨架检测后的结果推送到浏览器）
-export interface RemoteFramePayload {
-  image: string;    // base64 JPEG（带骨架叠加）
-  width: number;
-  height: number;
-  timestamp: number;
-}
-
-export interface RemoteSkeletonPayload {
-  landmarks: Landmark[];
-  worldLandmarks: Landmark[];
-  timestamp: number;
-}
-
-export interface RpiStatusPayload {
-  connected: boolean;
 }
 
 // ─── WebSocket 客户端工具 ───────────────────────

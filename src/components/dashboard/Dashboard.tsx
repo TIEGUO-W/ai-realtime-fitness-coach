@@ -16,8 +16,6 @@ import {
   type Landmark,
   type AlgorithmUpdatePayload,
   type TTSReadyPayload,
-  type RemoteFramePayload,
-  type RpiStatusPayload,
 } from '@/lib/ws-client';
 
 // ─── MediaPipe Pose connections ─────────────────────
@@ -31,7 +29,7 @@ const POSE_CONNECTIONS: Array<[number, number]> = [
 
 const MP_VISION_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
 
-type SourceMode = 'local' | 'remote';
+type SourceMode = 'local';
 
 function getSkeletonColor(quality: 'good' | 'warning' | 'error'): string {
   switch (quality) {
@@ -64,7 +62,6 @@ export default function Dashboard() {
   const startTimeRef = useRef(Date.now());
 
   // PoseCoach state
-  const [source, setSource] = useState<SourceMode>('local');
   const [isRunning, setIsRunning] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState('auto');
   const [wsConnected, setWsConnected] = useState(false);
@@ -75,9 +72,6 @@ export default function Dashboard() {
   const [modelReady, setModelReady] = useState(false);
   const [loadStage, setLoadStage] = useState('');
   const [loadError, setLoadError] = useState('');
-  const [remoteFps, setRemoteFps] = useState(0);
-  const [remoteImageUrl, setRemoteImageUrl] = useState('');
-  const [rpiConnected, setRpiConnected] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceMessages, setVoiceMessages] = useState<{ from: 'user' | 'coach'; text: string }[]>([]);
@@ -255,17 +249,6 @@ export default function Dashboard() {
         }
         break;
       }
-      case 'remote_frame': {
-        const frame = msg.payload as RemoteFramePayload;
-        setRemoteImageUrl(`data:image/jpeg;base64,${frame.image}`);
-        setRemoteFps(prev => prev + 1);
-        break;
-      }
-      case 'rpi_status': {
-        const status = msg.payload as RpiStatusPayload;
-        setRpiConnected(status.connected);
-        break;
-      }
       case 'voice_command_result':
       case 'voice_reply': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -325,7 +308,7 @@ export default function Dashboard() {
 
   // ─── MediaPipe Pose (local mode) ─────────────────────
   useEffect(() => {
-    if (!isRunning || source !== 'local') return;
+    if (!isRunning) return;
     let cancelled = false;
 
     async function initMediaPipe() {
@@ -394,11 +377,11 @@ export default function Dashboard() {
       setModelReady(false);
       setPoseDetected(false);
     };
-  }, [isRunning, source]);
+  }, [isRunning]);
 
   // ─── Pose detection loop ─────────────────────────────
   useEffect(() => {
-    if (!isRunning || source !== 'local' || !modelReady) return;
+    if (!isRunning || !modelReady) return;
     let rafId: number;
     let lastTimestamp = 0;
 
@@ -513,7 +496,7 @@ export default function Dashboard() {
 
     rafId = requestAnimationFrame(detect);
     return () => cancelAnimationFrame(rafId);
-  }, [isRunning, source, modelReady, quality, selectedExercise]);
+  }, [isRunning, modelReady, quality, selectedExercise]);
 
   // ─── Voice interaction ────────────────────────────────
   useEffect(() => {
@@ -714,11 +697,8 @@ export default function Dashboard() {
           isRunning={isRunning}
           videoRef={videoRef}
           canvasRef={canvasRef}
-          remoteImageUrl={remoteImageUrl}
           selectedExercise={selectedExercise}
           onExerciseChange={setSelectedExercise}
-          sourceMode={source}
-          onSourceModeChange={setSource}
           voiceEnabled={voiceEnabled}
           onVoiceToggle={() => setVoiceEnabled(v => !v)}
           poseDetected={poseDetected}

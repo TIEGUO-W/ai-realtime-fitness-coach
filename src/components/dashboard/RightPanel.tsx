@@ -16,14 +16,9 @@ interface RightPanelProps {
   // Camera + canvas refs passed from parent
   videoRef?: React.RefObject<HTMLVideoElement | null>;
   canvasRef?: React.RefObject<HTMLCanvasElement | null>;
-  // Remote frame image
-  remoteImageUrl?: string;
   // Exercise controls
   selectedExercise: string;
   onExerciseChange: (exercise: string) => void;
-  // Mode toggle
-  sourceMode: 'local' | 'remote';
-  onSourceModeChange: (mode: 'local' | 'remote') => void;
   // Voice toggle
   voiceEnabled: boolean;
   onVoiceToggle: () => void;
@@ -60,11 +55,8 @@ export default function RightPanel({
   isRunning,
   videoRef: externalVideoRef,
   canvasRef: externalCanvasRef,
-  remoteImageUrl,
   selectedExercise,
   onExerciseChange,
-  sourceMode,
-  onSourceModeChange,
   voiceEnabled,
   onVoiceToggle,
   poseDetected,
@@ -115,29 +107,7 @@ export default function RightPanel({
           >
             {voiceEnabled ? '🎙 语音ON' : '🎙 语音OFF'}
           </button>
-          {/* Mode toggle */}
-          <div className="flex items-center gap-1 text-xs font-mono">
-            <button
-              onClick={() => onSourceModeChange('local')}
-              className={`px-2.5 py-1 rounded-l-full border transition-all ${
-                sourceMode === 'local'
-                  ? 'border-cyber-cyan/50 bg-cyber-cyan/15 text-cyber-cyan'
-                  : 'border-slate-600/50 bg-slate-800/60 text-slate-400'
-              }`}
-            >
-              本地
-            </button>
-            <button
-              onClick={() => onSourceModeChange('remote')}
-              className={`px-2.5 py-1 rounded-r-full border transition-all ${
-                sourceMode === 'remote'
-                  ? 'border-cyber-cyan/50 bg-cyber-cyan/15 text-cyber-cyan'
-                  : 'border-slate-600/50 bg-slate-800/60 text-slate-400'
-              }`}
-            >
-              远程
-            </button>
-          </div>
+
           {modelReady && (
             <span className={`text-[10px] font-mono ${poseDetected ? 'text-green-400' : 'text-slate-500'}`}>
               {poseDetected ? '● 骨架检测' : '○ 等待检测'}
@@ -187,24 +157,15 @@ export default function RightPanel({
           muted
           playsInline
           autoPlay
-          style={{ display: isRunning && sourceMode === 'local' ? 'block' : 'none' }}
+          style={{ display: isRunning ? 'block' : 'none' }}
         />
 
         {/* Canvas overlay for skeleton drawing */}
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ display: isRunning && sourceMode === 'local' ? 'block' : 'none' }}
+          style={{ display: isRunning ? 'block' : 'none' }}
         />
-
-        {/* Remote frame image */}
-        {isRunning && sourceMode === 'remote' && remoteImageUrl && (
-          <img
-            src={remoteImageUrl}
-            alt="Remote camera"
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-        )}
 
         {/* Loading / Placeholder */}
         {!isRunning && (
@@ -250,7 +211,7 @@ export default function RightPanel({
             REC
           </span>
           <span className="text-xs text-slate-500 font-mono">
-            {sourceMode === 'local' ? 'LOCAL' : 'REMOTE'} · {workout.currentAction}
+            LOCAL · {workout.currentAction}
           </span>
         </div>
 
