@@ -108,6 +108,8 @@ export default function LeftPanel({
   const [popupOpen, setPopupOpen] = useState(false);
   const [splineLoading, setSplineLoading] = useState(true);
   const [splineKey, setSplineKey] = useState(0);
+  const [showQr, setShowQr] = useState(false);
+  const [qrUrl, setQrUrl] = useState('');
 
   const activeModel = mode === 'auto' ? autoModel : getModelById(manualId);
 
@@ -215,6 +217,10 @@ export default function LeftPanel({
     };
   }, []);
 
+  useEffect(() => {
+    setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/health`)}&bgcolor=0F1117&color=E8E9ED`);
+  }, []);
+
   return (
     <div className="flex flex-col h-full">
       {/* Coach Message Panel */}
@@ -244,6 +250,42 @@ export default function LeftPanel({
           <span>动作 {workout.currentAction}</span>
         </div>
       </div>
+
+      {/* QR 码按钮 */}
+      <div className="mx-3 mb-2">
+        <button
+          onClick={() => setShowQr(true)}
+          className="w-full flex items-center gap-2 rounded-xl border border-[#00E5FF]/30 bg-[#00E5FF]/5 px-3 py-2 hover:bg-[#00E5FF]/10 transition-colors"
+        >
+          <span className="text-base">📱</span>
+          <span className="text-xs text-[#E8E9ED]">扫码连接健康数据</span>
+          <span className="ml-auto text-[10px] text-[#00E5FF]/60">QR</span>
+        </button>
+      </div>
+
+      {/* QR 码弹窗 */}
+      {showQr && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowQr(false)}>
+          <div
+            className="rounded-2xl bg-[#0F1117] border border-[#1A1D27] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center mb-4">
+              <h3 className="text-base font-semibold text-[#E8E9ED]">扫码连接健康数据</h3>
+              <p className="text-xs text-[#8B8FA3] mt-1">手机扫码 → 填资料 → 授权 Apple Health</p>
+            </div>
+            {qrUrl && (
+              <img src={qrUrl} alt="QR码" className="h-52 w-52 rounded-xl border border-[#1A1D27] mx-auto" />
+            )}
+            <button
+              onClick={() => setShowQr(false)}
+              className="w-full mt-4 rounded-lg bg-[#1A1D27] hover:bg-[#252836] text-sm text-[#E8E9ED] py-2 transition-colors"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 3D Model */}
       <div className="flex-1 relative mx-3 mb-3">
