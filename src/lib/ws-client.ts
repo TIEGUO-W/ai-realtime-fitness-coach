@@ -40,6 +40,7 @@ export interface CoachingFeedback {
   repCount: number;       // 计数
   stage: string;          // 当前阶段
   quality: 'good' | 'warning' | 'error'; // 动作质量
+  qualityScore?: number;  // 动作质量分数 (0-100)
   effect: FrontendEffect; // 前端特效指令
   tips: string[];         // 纠正建议
   encouragement: string;  // 鼓励语
@@ -62,6 +63,7 @@ export interface AlgorithmUpdatePayload {
 export interface TTSReadyPayload {
   audioUrl: string;
   text: string;
+  priority?: 'high' | 'medium' | 'low';
 }
 
 // 远程帧数据（服务端骨架检测后的结果推送到浏览器）

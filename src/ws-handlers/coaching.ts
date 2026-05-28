@@ -12,6 +12,7 @@ import type { WsMessage, PoseFrame } from '../lib/ws-client';
 import { PoseAlgorithmEngine } from './pose-algorithm';
 import { CoachSession } from './coach-session';
 import { parseVoiceCommand } from './voice-command';
+import { setExerciseForCamera } from './camera';
 import { ASRClient, Config } from 'coze-coding-dev-sdk';
 
 const ALGORITHM_INTERVAL_MS = 100; // 算法推送 ~10fps
@@ -73,6 +74,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
       const raw = (msg.payload as { exercise: string }).exercise || 'squat';
       currentExercise = normalizeExercise(raw);
       session.setExercise(currentExercise);
+      setExerciseForCamera(currentExercise);
       algorithm.reset();
       return;
     }
@@ -105,6 +107,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
         if (intent.action === 'switch_exercise') {
           currentExercise = normalizeExercise(intent.exercise);
           session.setExercise(currentExercise);
+          setExerciseForCamera(currentExercise);
           algorithm.reset();
           safeSend(ws, { type: 'set_exercise', payload: { exercise: intent.exercise } });
         } else if (intent.action === 'reset') {
@@ -170,6 +173,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
       if (batch.exercise) {
         currentExercise = batch.exercise;
         session.setExercise(currentExercise);
+        setExerciseForCamera(currentExercise);
       }
       for (const frame of batch.frames) {
         if (frame.landmarks && frame.landmarks.length >= 28) {

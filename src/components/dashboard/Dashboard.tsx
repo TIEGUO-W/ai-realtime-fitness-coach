@@ -7,7 +7,7 @@ import CustomPlanModal from './CustomPlanModal';
 import WorkoutSummaryModal from './WorkoutSummaryModal';
 import type { DashboardData, CoachPersonality, CoachVoice, Workout, Biometrics } from '@/types/dashboard';
 import { mockData } from '@/data/mockData';
-import { getCoachMessage } from '@/utils/coachVoice';
+
 import { triggerHighScore, triggerLowScore, triggerWorkoutComplete } from '@/utils/confettiEffects';
 import {
   createWsConnection,
@@ -95,62 +95,92 @@ export default function Dashboard() {
   }));
 
   // Speaking state for monster mouth animation
-  // ─── TTS Playback Queue ────────────────────────────
+  // ─── TTS Playback Queue (Priority-aware) ──────────────
   const [isSpeaking, setIsSpeaking] = useState(false);
   const currentCoachMsgRef = useRef('');
-  const audioQueueRef = useRef<string[]>([]);
+  const audioQueueRef = useRef<Array<{ url: string; priority: 'high' | 'medium' | 'low' }>>([]);
   const isPlayingRef = useRef(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Strip URLs from coaching text (e.g. audio links from Doubao bot)
   const stripUrls = (text: string): string =>
     text.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
 
-  // Play next audio in queue
+  // Interrupt current audio (for high priority)
+  const stopCurrentAudio = useCallback(() => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.onended = null;
+      currentAudioRef.current.onerror = null;
+      currentAudioRef.current = null;
+    }
+    isPlayingRef.current = false;
+    setIsSpeaking(false);
+  }, []);
+
+  // Play next audio in queue (priority sorted)
   const playNextInQueue = useCallback(async () => {
     if (isPlayingRef.current) return;
-    const nextUrl = audioQueueRef.current.shift();
-    if (!nextUrl) return;
+    if (audioQueueRef.current.length === 0) return;
 
-    console.log('[TTS] playNextInQueue, fetching:', nextUrl.substring(0, 60));
+    // Sort by priority: high first
+    audioQueueRef.current.sort((a, b) => {
+      const order = { high: 0, medium: 1, low: 2 };
+      return order[a.priority] - order[b.priority];
+    });
+    const next = audioQueueRef.current.shift();
+    if (!next) return;
+
+    console.log('[TTS] playNextInQueue, priority:', next.priority, 'url:', next.url.substring(0, 60));
     isPlayingRef.current = true;
     setIsSpeaking(true);
     try {
-      const resp = await fetch(nextUrl);
+      const resp = await fetch(next.url);
       const blob = await resp.blob();
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
+      currentAudioRef.current = audio;
       audio.onended = () => {
         URL.revokeObjectURL(blobUrl);
+        currentAudioRef.current = null;
         isPlayingRef.current = false;
         setIsSpeaking(false);
         console.log('[TTS] audio onended, playing next if any');
-        playNextInQueue(); // play next in queue
+        playNextInQueue();
       };
       audio.onerror = () => {
         URL.revokeObjectURL(blobUrl);
+        currentAudioRef.current = null;
         isPlayingRef.current = false;
         setIsSpeaking(false);
         console.log('[TTS] audio onerror');
-        playNextInQueue(); // continue queue on error
+        playNextInQueue();
       };
       await audio.play();
       console.log('[TTS] audio.play() started');
     } catch (err) {
       console.error('[TTS] playNextInQueue error:', err);
+      currentAudioRef.current = null;
       isPlayingRef.current = false;
       setIsSpeaking(false);
-      playNextInQueue(); // continue queue on error
+      playNextInQueue();
     }
   }, []);
 
-  // Enqueue audio URL for sequential playback
-  const enqueueAudio = useCallback((audioUrl: string) => {
-    console.log('[TTS] enqueueAudio, queue length:', audioQueueRef.current.length, 'isPlaying:', isPlayingRef.current);
-    audioQueueRef.current.push(audioUrl);
+  // Enqueue audio URL with priority
+  const enqueueAudio = useCallback((audioUrl: string, priority: 'high' | 'medium' | 'low' = 'medium') => {
+    console.log('[TTS] enqueueAudio, priority:', priority, 'queue:', audioQueueRef.current.length, 'isPlaying:', isPlayingRef.current);
+    if (priority === 'high' && isPlayingRef.current) {
+      // High priority: interrupt current audio and play immediately
+      stopCurrentAudio();
+      audioQueueRef.current.unshift({ url: audioUrl, priority });
+    } else {
+      audioQueueRef.current.push({ url: audioUrl, priority });
+    }
     if (!isPlayingRef.current) {
       playNextInQueue();
     }
-  }, [playNextInQueue]);
+  }, [playNextInQueue, stopCurrentAudio]);
 
   // ─── WS Message Handler ──────────────────────────────
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -177,14 +207,13 @@ export default function Dashboard() {
         break;
       }
       case 'rep_completed': {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const p = msg.payload as { repCount: number; effect: unknown; quality: number };
+        const p = msg.payload as AlgorithmUpdatePayload;
         setData(prev => ({
           ...prev,
           workout: {
             ...prev.workout,
             reps: Math.max(prev.workout.reps, p.repCount),
-            score: p.quality ?? prev.workout.score,
+            score: p.qualityScore ?? prev.workout.score,
           },
         }));
         break;
@@ -207,7 +236,7 @@ export default function Dashboard() {
             currentAction: EXERCISE_LABELS[fb.exercise] || fb.exercise || prev.workout.currentAction,
             reps: Math.max(prev.workout.reps, fb.repCount),
             isFormDeformed: fb.quality === 'error',
-            score: prev.workout.score,
+            score: fb.qualityScore ?? prev.workout.score,
           },
           assistant: {
             message: coachMsg || prev.assistant.message,
@@ -221,7 +250,8 @@ export default function Dashboard() {
         const tts = msg.payload as TTSReadyPayload;
         console.log('[TTS] tts_ready received, audioUrl:', tts.audioUrl?.substring(0, 80));
         if (tts.audioUrl) {
-          enqueueAudio(tts.audioUrl);
+          const priority = tts.priority || 'medium';
+          enqueueAudio(tts.audioUrl, priority);
         }
         break;
       }
@@ -262,7 +292,7 @@ export default function Dashboard() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = msg.payload as any;
         if (p.audioUrl) {
-          enqueueAudio(p.audioUrl);
+          enqueueAudio(p.audioUrl, 'high'); // voice replies are always high priority
         }
         break;
       }
@@ -577,34 +607,10 @@ export default function Dashboard() {
 
   // ─── Coach personality: fallback only when backend is silent ───
   const lastCoachMsgTimeRef = useRef(Date.now());
+  // Track last coaching message time for potential future use
   useEffect(() => {
-    // Update timestamp whenever coaching_feedback arrives
+    lastCoachMsgTimeRef.current = Date.now();
   }, [data.assistant.message]);
-  useEffect(() => {
-    // Only use local coachVoice as fallback when backend hasn't sent a message in 15+ seconds
-    if (!isRunning) return;
-    const interval = setInterval(() => {
-      const timeSinceLastMsg = Date.now() - lastCoachMsgTimeRef.current;
-      if (timeSinceLastMsg < 15000) return; // backend is active, skip local
-      const localMsg = getCoachMessage(
-        data.biometrics.heartRate,
-        data.workout.score,
-        data.workout.currentAction,
-        data.workout.isFormDeformed,
-        personality,
-      );
-      lastCoachMsgTimeRef.current = Date.now();
-      setData(prev => ({
-        ...prev,
-        assistant: {
-          ...prev.assistant,
-          message: localMsg.message,
-          isAlert: localMsg.isAlert,
-        },
-      }));
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [isRunning, personality, data.biometrics.heartRate, data.workout.score, data.workout.currentAction, data.workout.isFormDeformed]);
 
   // ─── Confetti triggers ───────────────────────────────
   const prevScoreRef = useRef(data.workout.score);
