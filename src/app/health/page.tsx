@@ -145,9 +145,21 @@ export default function HealthPage() {
           <CardContent className="p-4 space-y-3">
             <h2 className="text-sm font-semibold">连接 Apple Health</h2>
             <p className="text-xs text-[#8B8FA3]">
-              一键导入心率、睡眠数据。教练会根据身体状况调整训练强度。
+              授权心率数据后，教练会实时监测你的身体状态并调整训练强度。
             </p>
 
+            {/* Step 1: Install shortcut */}
+            <a
+              href="https://www.icloud.com/shortcuts/4d42897f5ef2448b9af6979ee6cf97c9"
+              target="_blank"
+              className="block w-full"
+            >
+              <Button className="w-full bg-[#1A1D27] hover:bg-[#252836] text-[#E8E9ED] text-sm py-5 border border-[#252836]">
+                ① 安装快捷指令
+              </Button>
+            </a>
+
+            {/* Step 2: Run */}
             <Button
               onClick={() => {
                 const apiUrl = `${window.location.origin}/api/health?sessionId=${encodeURIComponent(sessionId)}`;
@@ -156,11 +168,11 @@ export default function HealthPage() {
               className="w-full bg-white hover:bg-white/90 text-black text-sm py-6"
             >
               <span className="mr-2 text-lg"></span>
-              连接 Apple Health
+              ② 读取健康数据
             </Button>
 
             <p className="text-[10px] text-[#8B8FA3]/50 text-center">
-              首次使用需先安装快捷指令。仅读取心率数据，不上传个人信息。
+              第①步只需做一次。仅读取心率，不上传个人信息。
             </p>
 
             {/* Live health data */}
