@@ -371,10 +371,15 @@ export default function Dashboard() {
         if (result.landmarks && result.landmarks.length > 0) {
           setPoseDetected(true);
           const lm = result.landmarks[0];
+          const color = getSkeletonColor(quality);
 
-          // Draw connections
+          // ── 外层光晕 ──
+          ctx.save();
+          ctx.strokeStyle = color;
           ctx.lineWidth = 3;
-          ctx.strokeStyle = getSkeletonColor(quality);
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 15;
+          ctx.globalAlpha = 0.6;
           ctx.lineCap = 'round';
           for (const [i, j] of POSE_CONNECTIONS) {
             if (i < lm.length && j < lm.length) {
@@ -385,13 +390,39 @@ export default function Dashboard() {
             }
           }
 
-          // Draw joints
+          // ── 内层主线 ──
+          ctx.globalAlpha = 1;
+          ctx.lineWidth = 1.5;
+          ctx.shadowBlur = 6;
+          for (const [i, j] of POSE_CONNECTIONS) {
+            if (i < lm.length && j < lm.length) {
+              ctx.beginPath();
+              ctx.moveTo(lm[i].x * canvas.width, lm[i].y * canvas.height);
+              ctx.lineTo(lm[j].x * canvas.width, lm[j].y * canvas.height);
+              ctx.stroke();
+            }
+          }
+
+          // ── 关节点：发光环 + 实心 + 高光 ──
+          ctx.shadowBlur = 12;
           for (const point of lm) {
+            const x = point.x * canvas.width, y = point.y * canvas.height;
             ctx.beginPath();
-            ctx.arc(point.x * canvas.width, point.y * canvas.height, 4, 0, 2 * Math.PI);
-            ctx.fillStyle = getSkeletonColor(quality);
+            ctx.arc(x, y, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.3;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.beginPath();
+            ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x - 0.7, y - 0.7, 1.2, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
             ctx.fill();
           }
+          ctx.restore();
 
           // Send as pose_frame for real-time coaching + TTS
           const wsLandmarks: Landmark[] = lm.map((p: { x: number; y: number; z: number; visibility?: number }) => ({
