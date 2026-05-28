@@ -291,9 +291,9 @@ export default function LeftPanel({
         </div>
 
         {/* 气泡式对话历史 */}
-        <div className="flex flex-col gap-2 max-h-[200px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+        <div className="flex flex-col gap-2 overflow-hidden pr-1">
           {chatMessages && chatMessages.length > 0 ? (
-            chatMessages.slice(-8).map((msg) => (
+            chatMessages.slice(-2).map((msg) => (
               <div key={msg.timestamp} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] px-3 py-1.5 rounded-xl text-[13px] leading-snug ${
                   msg.from === 'user'

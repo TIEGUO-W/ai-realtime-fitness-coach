@@ -100,6 +100,9 @@ export class CoachSession {
     });
 
     this.startTimers();
+
+    // 连接建立后立即打招呼
+    setTimeout(() => this.emitGreeting(), 500);
   }
 
   /** 绑定 session，加载健康档案 */
@@ -267,6 +270,7 @@ export class CoachSession {
   /** 训练开始时的暖场话术 */
   private emitWarmup(exercise: string): void {
     const text = generateWarmupCoaching(exercise);
+    console.log('[CoachSession] emitWarmup:', text, 'exercise:', exercise);
     if (!text) return;
     const prefix = this.personality.getMoodPrefix();
     const fullText = prefix ? prefix + text : text;
@@ -285,6 +289,32 @@ export class CoachSession {
     this.ttsQueue.enqueue(fullText, 'high');
   }
 
+  /** 连接建立时的问候话术 */
+  private emitGreeting(): void {
+    if (this.ws.readyState !== this.ws.OPEN) return;
+    const greetings = [
+      '嘿！我来了，准备好了吗？',
+      '教练上线！来，咱们开练？',
+      '哟，来了啊！等你半天了',
+      '准备好了吗？今天练点啥？',
+      '我在这儿呢，随时可以开始！',
+    ];
+    const text = greetings[Math.floor(Math.random() * greetings.length)];
+    console.log('[CoachSession] emitGreeting:', text);
+    this.lastSpeechTime = Date.now();
+    this.addToHistory('coach', text);
+    this.lastCoachMessage = text;
+    this.send({
+      type: 'coaching_feedback',
+      payload: {
+        exercise: this.currentExercise, repCount: 0,
+        stage: 'neutral', quality: 'good' as const, effect: null,
+        tips: [text], encouragement: text,
+      },
+    });
+    this.ttsQueue.enqueue(text, 'high');
+  }
+
   getRepCount(): number {
     return this.lastAlgorithmResult?.repCount ?? 0;
   }
@@ -301,7 +331,7 @@ export class CoachSession {
   // ═══ 定时器 ═══════════════════════════════════
 
   private startTimers(): void {
-    // 空闲检测：每 5 秒检查
+    console.log('[CoachSession] startTimers called, idleThresholdMs=', this.config.idleThresholdMs);
     this.idleTimer = setInterval(() => {
       if (this.ws.readyState !== this.ws.OPEN) {
         if (this.idleTimer) clearInterval(this.idleTimer);
@@ -310,13 +340,13 @@ export class CoachSession {
       const idle = Date.now() - this.lastActivityTime;
       const timeSinceLastSpeech = Date.now() - this.lastSpeechTime;
 
-      // 空闲状态：持续催促（每8秒说一次）
       if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 8000) {
+        console.log(`[CoachSession] idle timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('idle');
       }
 
-      // 活跃状态：周期性鼓励（每10秒说一次，即使在做动作也说话）
       if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 10000) {
+        console.log(`[CoachSession] periodic timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('periodic');
       }
     }, 3000);
