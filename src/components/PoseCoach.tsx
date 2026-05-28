@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import confetti from 'canvas-confetti';
 import {
   createWsConnection,
   type WsMessage,
@@ -79,6 +80,7 @@ export default function PoseCoach() {
   const [repCount, setRepCount] = useState(0);
   const [detectedExercise, setDetectedExercise] = useState('');
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
+  const [qualityScore, setQualityScore] = useState(100);
   const [poseDetected, setPoseDetected] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [loadStage, setLoadStage] = useState('');
@@ -349,13 +351,17 @@ export default function PoseCoach() {
         stage: string;
         repCount: number;
         quality: 'good' | 'warning' | 'error';
+        qualityScore: number;
         effect: 'perfect' | 'excellent' | 'good' | null;
         kneeAngle: number | null;
         hipAngle: number | null;
+        errors: string[];
+        warnings: string[];
       };
       setDetectedExercise(payload.exercise);
       setRepCount(payload.repCount);
       setQuality(payload.quality);
+      setQualityScore(payload.qualityScore);
       // 更新实时角度显示等
       return;
     }
@@ -371,6 +377,17 @@ export default function PoseCoach() {
       if (payload.effect) {
         setEffectFlash(payload.effect);
         setTimeout(() => setEffectFlash(null), 1500);
+        // 彩纸特效
+        if (payload.effect === 'perfect' || payload.effect === 'excellent') {
+          confetti({
+            particleCount: payload.effect === 'perfect' ? 150 : 60,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: payload.effect === 'perfect'
+              ? ['#FFD700', '#FF6B35', '#22D3A7', '#00E5FF']
+              : ['#22D3A7', '#00E5FF', '#E8E9ED'],
+          });
+        }
       }
       return;
     }
@@ -467,7 +484,7 @@ export default function PoseCoach() {
     });
   }, [selectedExercise, source]);
 
-  // 绘制骨架
+  // 绘制骨架 — 霓虹发光风格
   const drawSkeleton = useCallback((
     ctx: CanvasRenderingContext2D,
     landmarks: Array<{ x: number; y: number; z: number; visibility: number }>,
@@ -477,10 +494,13 @@ export default function PoseCoach() {
   ) => {
     const color = getSkeletonColor(currentQuality);
 
+    // ── 外层光晕（宽线 + 大阴影） ──
+    ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 15;
+    ctx.globalAlpha = 0.6;
 
     for (const [start, end] of POSE_CONNECTIONS) {
       const a = landmarks[start];
@@ -493,20 +513,50 @@ export default function PoseCoach() {
       }
     }
 
-    ctx.shadowBlur = 12;
-    for (let i = 0; i < landmarks.length; i++) {
-      const lm = landmarks[i];
-      if (lm && lm.visibility > 0.5) {
+    // ── 内层主线（细线 + 小阴影 = 霓虹管效果） ──
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1.5;
+    ctx.shadowBlur = 6;
+
+    for (const [start, end] of POSE_CONNECTIONS) {
+      const a = landmarks[start];
+      const b = landmarks[end];
+      if (a && b && a.visibility > 0.5 && b.visibility > 0.5) {
         ctx.beginPath();
-        ctx.arc(lm.x * w, lm.y * h, 5, 0, 2 * Math.PI);
-        ctx.fillStyle = color;
-        ctx.fill();
-        ctx.strokeStyle = '#0F1117';
-        ctx.lineWidth = 1;
+        ctx.moveTo(a.x * w, a.y * h);
+        ctx.lineTo(b.x * w, b.y * h);
         ctx.stroke();
       }
     }
-    ctx.shadowBlur = 0;
+
+    // ── 关节点：发光环 + 实心 ──
+    ctx.shadowBlur = 12;
+    for (let i = 0; i < landmarks.length; i++) {
+      const lm = landmarks[i];
+      if (!lm || lm.visibility <= 0.5) continue;
+      const x = lm.x * w, y = lm.y * h;
+
+      // 外发光
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.3;
+      ctx.fill();
+
+      // 内实心
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // 白色高光
+      ctx.beginPath();
+      ctx.arc(x - 0.7, y - 0.7, 1.2, 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fill();
+    }
+    ctx.restore();
   }, []);
 
   // 本地模式启动（复用常驻 Pose 实例）
@@ -944,11 +994,11 @@ export default function PoseCoach() {
           <div className="flex items-center justify-between text-xs text-[#8B8FA3]">
             <span>质量评分</span>
             <span className={qualityColor}>
-              {quality === 'good' ? '90%' : quality === 'warning' ? '60%' : '30%'}
+              {qualityScore}%
             </span>
           </div>
           <Progress
-            value={quality === 'good' ? 90 : quality === 'warning' ? 60 : 30}
+            value={qualityScore}
             className="mt-1.5 h-1.5 bg-[#1A1D27]"
           />
         </div>
