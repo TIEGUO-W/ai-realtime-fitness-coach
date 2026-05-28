@@ -257,3 +257,22 @@ body {
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
 }
+
+/* Monster shake animation */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px) rotate(-1deg); }
+  40% { transform: translateX(4px) rotate(1deg); }
+  60% { transform: translateX(-3px) rotate(-0.5deg); }
+  80% { transform: translateX(3px) rotate(0.5deg); }
+}
+
+/* Monster pulse animation (form deformation warning) */
+@keyframes monster-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+.animate-monster-pulse {
+  animation: monster-pulse 0.8s ease-in-out infinite;
+}

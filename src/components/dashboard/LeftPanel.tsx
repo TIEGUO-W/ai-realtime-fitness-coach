@@ -111,6 +111,46 @@ export default function LeftPanel({
   const [showQr, setShowQr] = useState(false);
   const [qrUrl, setQrUrl] = useState('');
 
+  // ─── 怪兽视觉反馈 ───
+  const [monsterEffect, setMonsterEffect] = useState<'none' | 'bounce' | 'shake' | 'pulse'>('none');
+  const [monsterGlow, setMonsterGlow] = useState('rgba(0,229,255,0.15)');
+  const prevRepsRef = useRef(workout.reps);
+  const prevScoreRef = useRef(workout.score);
+
+  // 次数增加 → 弹跳
+  useEffect(() => {
+    if (workout.reps > prevRepsRef.current && prevRepsRef.current > 0) {
+      setMonsterEffect('bounce');
+      setTimeout(() => setMonsterEffect('none'), 600);
+    }
+    prevRepsRef.current = workout.reps;
+  }, [workout.reps]);
+
+  // 质量变化 → 变色发光
+  useEffect(() => {
+    const s = workout.score;
+    if (s >= 85) setMonsterGlow('rgba(34,211,167,0.35)');      // 绿色
+    else if (s >= 60) setMonsterGlow('rgba(0,229,255,0.25)');   // 青色
+    else if (s >= 40) setMonsterGlow('rgba(255,107,53,0.35)');  // 橙色
+    else setMonsterGlow('rgba(255,71,87,0.40)');                 // 红色
+
+    // 分数骤降 → 抖动
+    if (prevScoreRef.current - s > 20 && prevScoreRef.current > 0) {
+      setMonsterEffect('shake');
+      setTimeout(() => setMonsterEffect('none'), 500);
+    }
+    prevScoreRef.current = s;
+  }, [workout.score]);
+
+  // 变形警告 → 持续脉冲
+  useEffect(() => {
+    if (workout.isFormDeformed) {
+      setMonsterEffect('pulse');
+    } else if (monsterEffect === 'pulse') {
+      setMonsterEffect('none');
+    }
+  }, [workout.isFormDeformed]);
+
   const activeModel = mode === 'auto' ? autoModel : getModelById(manualId);
 
   // Mouth animation refs
@@ -296,9 +336,18 @@ export default function LeftPanel({
         </div>
       )}
 
-      {/* 3D Model */}
-      <div className="flex-1 relative mx-3 mb-3">
-        <div className="absolute inset-0">
+      {/* 3D Model — 怪兽视觉反馈 */}
+      <div
+        className={`flex-1 relative mx-3 mb-3 transition-transform duration-300 ${
+          monsterEffect === 'bounce' ? 'scale-110' : ''
+        } ${monsterEffect === 'shake' ? 'animate-[shake_0.4s_ease-in-out]' : ''} ${
+          monsterEffect === 'pulse' ? 'animate-monster-pulse' : ''
+        }`}
+      >
+        <div
+          className="absolute inset-0 rounded-2xl transition-all duration-500"
+          style={{ boxShadow: `0 0 40px ${monsterGlow}, inset 0 0 30px ${monsterGlow}` }}
+        >
           <Spline
             key={splineKey}
             scene={activeModel.url}
@@ -306,8 +355,17 @@ export default function LeftPanel({
             style={{ width: '100%', height: '100%' }}
           />
         </div>
-        <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-cyber-cyan/25 via-cyber-cyan/5 to-transparent pointer-events-none" />
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-40 h-2.5 rounded-full bg-cyber-cyan/30 blur-[6px] pointer-events-none" />
+        {/* 动态发光底光 */}
+        <div
+          className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t pointer-events-none transition-all duration-500"
+          style={{ '--glow': monsterGlow } as React.CSSProperties}
+        >
+          <div className="absolute inset-0 bg-gradient-to-t from-[var(--glow)] via-transparent to-transparent opacity-60" />
+        </div>
+        <div
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 w-40 h-2.5 rounded-full blur-[6px] pointer-events-none transition-all duration-500"
+          style={{ backgroundColor: monsterGlow.replace('0.35', '0.5').replace('0.25', '0.4').replace('0.40', '0.55').replace('0.15', '0.3') }}
+        />
         {splineLoading && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center">
             <div className="w-10 h-10 border-2 border-cyber-cyan/30 border-t-cyber-cyan rounded-full animate-spin" />
