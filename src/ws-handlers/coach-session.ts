@@ -4,7 +4,7 @@ import type { WsMessage } from '../lib/ws-client';
 import { CircuitBreaker } from './circuit-breaker';
 import { TTSQueue, type TtsPriority } from './tts-queue';
 import { CoachPersonality, buildSystemPrompt, type Mood } from './coach-personality';
-import { generateQuickCoaching, generateIdleCoaching, getExerciseName } from './coaching-templates';
+import { generateQuickCoaching, generateIdleCoaching, generateWarmupCoaching, getExerciseName } from './coaching-templates';
 import { parseVoiceCommand, getVoiceCommandReply } from './voice-command';
 import { getHealth, assessHeartRate, sleepAdvice, type WatchHealthData } from '../lib/health-store';
 import { LLMClient, TTSClient, Config } from 'coze-coding-dev-sdk';
@@ -45,8 +45,8 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG: SessionConfig = {
   llmTimeoutMs: 2500,
-  speechCooldownMs: 2000,
-  idleThresholdMs: 10_000,
+  speechCooldownMs: 1500,
+  idleThresholdMs: 8000,
   deepCoachIntervalMs: 30_000,
   maxHistoryLength: 20,
 };
@@ -190,6 +190,7 @@ export class CoachSession {
       const text = generateIdleCoaching();
       if (!text) return;
       const prefixed = this.personality.getMoodPrefix() + text;
+      this.lastSpeechTime = Date.now();
       this.addToHistory('coach', prefixed);
       this.lastCoachMessage = prefixed;
       this.personality.consumeMessage();
@@ -201,16 +202,87 @@ export class CoachSession {
           tips: [prefixed], encouragement: prefixed,
         },
       });
-      this.ttsQueue.enqueue(prefixed, 'low');
+      this.ttsQueue.enqueue(prefixed, 'medium');
     }
 
-    if (type === 'periodic' && !this.llmBusy) {
-      this.fireDeepCoach();
+    if (type === 'periodic') {
+      // 活跃周期性鼓励 — 根据当前状态说话
+      const result = this.lastAlgorithmResult;
+      if (result) {
+        const q = result.quality.qualityScore >= 85 ? 'good' as const
+          : result.quality.qualityScore >= 60 ? 'adjust' as const
+          : 'warning' as const;
+        const fb = generateQuickCoaching(result.exercise, result.stage, q, result.repCount);
+        if (fb.text) {
+          const prefix = this.personality.getMoodPrefix();
+          const text = prefix ? prefix + fb.text : fb.text;
+          this.lastSpeechTime = Date.now();
+          this.addToHistory('coach', text);
+          this.lastCoachMessage = text;
+          this.personality.consumeMessage();
+          const qualityLevel = result.quality.qualityScore >= 85 ? 'good' as const
+            : result.quality.qualityScore >= 60 ? 'warning' as const : 'error' as const;
+          this.send({
+            type: 'coaching_feedback',
+            payload: {
+              exercise: result.exercise, repCount: result.repCount,
+              stage: result.stage, quality: qualityLevel, effect: result.effect,
+              tips: [text], encouragement: text,
+            },
+          });
+          this.ttsQueue.enqueue(text, 'low');
+        }
+      } else {
+        // 没有骨架数据但连接着 — 主动邀请
+        const text = generateWarmupCoaching(this.currentExercise);
+        if (text) {
+          this.lastSpeechTime = Date.now();
+          this.addToHistory('coach', text);
+          this.lastCoachMessage = text;
+          this.send({
+            type: 'coaching_feedback',
+            payload: {
+              exercise: this.currentExercise, repCount: 0,
+              stage: 'neutral', quality: 'good' as const, effect: null,
+              tips: [text], encouragement: text,
+            },
+          });
+          this.ttsQueue.enqueue(text, 'low');
+        }
+      }
+
+      // 深度点评（低频，不抢占周期性鼓励）
+      if (!this.llmBusy) {
+        this.fireDeepCoach();
+      }
     }
   }
 
   setExercise(exercise: string): void {
     this.currentExercise = exercise;
+    // 暖场开场白
+    this.emitWarmup(exercise);
+  }
+
+  /** 训练开始时的暖场话术 */
+  private emitWarmup(exercise: string): void {
+    const text = generateWarmupCoaching(exercise);
+    if (!text) return;
+    const prefix = this.personality.getMoodPrefix();
+    const fullText = prefix ? prefix + text : text;
+    this.lastSpeechTime = Date.now();
+    this.addToHistory('coach', fullText);
+    this.lastCoachMessage = fullText;
+    this.personality.consumeMessage();
+    this.send({
+      type: 'coaching_feedback',
+      payload: {
+        exercise, repCount: 0,
+        stage: 'neutral', quality: 'good' as const, effect: null,
+        tips: [fullText], encouragement: fullText,
+      },
+    });
+    this.ttsQueue.enqueue(fullText, 'high');
   }
 
   getRepCount(): number {
@@ -236,15 +308,18 @@ export class CoachSession {
         return;
       }
       const idle = Date.now() - this.lastActivityTime;
-      // 刚超过阈值的第一个周期触发
-      if (idle > this.config.idleThresholdMs && idle < this.config.idleThresholdMs + 5000) {
+      const timeSinceLastSpeech = Date.now() - this.lastSpeechTime;
+
+      // 空闲状态：持续催促（每8秒说一次）
+      if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 8000) {
         this.onTimer('idle');
       }
-      // 深度点评
-      if (idle < this.config.idleThresholdMs && Date.now() - this.lastActivityTime > this.config.deepCoachIntervalMs) {
-        // 这个判断不够精确，用独立的 deep coach 跟踪
+
+      // 活跃状态：周期性鼓励（每10秒说一次，即使在做动作也说话）
+      if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 10000) {
+        this.onTimer('periodic');
       }
-    }, 5000);
+    }, 3000);
   }
 
   // ═══ 决策引擎 ═══════════════════════════════
@@ -303,8 +378,8 @@ export class CoachSession {
     // 5. 完成一次 → 高概率鼓励（确保几乎每次都有反馈）
     if (result.completedRep) {
       const speakChance = result.repCount <= 3 ? 1.0   // 前3次必说
-        : result.repCount <= 10 ? 0.8                    // 4-10次 80%
-        : 0.5;                                           // 10次以上 50%（避免太啰嗦）
+        : result.repCount <= 10 ? 0.9                    // 4-10次 90%
+        : 0.7;                                           // 10次以上 70%
       if (Math.random() < speakChance) {
         const q = result.quality.qualityScore >= 90 ? 'perfect' as const
           : result.quality.qualityScore >= 75 ? 'good' as const
@@ -315,8 +390,8 @@ export class CoachSession {
       }
     }
 
-    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（6秒+）
-    if (this.recentQualityScores.length >= 3 && now - this.lastSpeechTime > 6000) {
+    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（4秒+）
+    if (this.recentQualityScores.length >= 3 && now - this.lastSpeechTime > 4000) {
       const q = result.quality.qualityScore >= 85 ? 'good' as const
         : result.quality.qualityScore >= 60 ? 'adjust' as const
         : 'warning' as const;

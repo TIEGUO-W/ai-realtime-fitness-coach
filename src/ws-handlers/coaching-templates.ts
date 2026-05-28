@@ -21,6 +21,8 @@ interface CoachingTemplates {
   };
   // 休息/停顿太久
   idle: string[];
+  // 暖场/开场白
+  warmup: string[];
 }
 
 // ============ 通用骚话（所有运动共享） ============
@@ -47,6 +49,7 @@ const commonTemplates: CoachingTemplates = {
     transition: ['准备好了吗？', '来，继续', '别愣着，动起来'],
   },
   idle: ['人呢？跑了？', '还练不练了？', '休息够了吧，继续啊', '我等得花都开了', '别摸鱼了！起来动！'],
+  warmup: ['准备好了吗？咱们开练！', '来吧，先热热身，别急', '开干！跟着我的节奏走', '好戏开场了，你准备好了吗？', '先来几个轻松的，找找感觉'],
 };
 
 // ============ 深蹲专属 ============
@@ -66,6 +69,7 @@ const squatTemplates: CoachingTemplates = {
     transition: ['准备，下一个', '来，继续蹲', '别歇太久'],
   },
   idle: commonTemplates.idle,
+  warmup: ['深蹲时间到！屁股准备好了吗？', '来，蹲起来！注意膝盖别内扣', '深蹲走起！先来几个标准的热热身'],
 };
 
 // ============ 硬拉专属 ============
@@ -85,6 +89,7 @@ const deadliftTemplates: CoachingTemplates = {
     transition: ['下一个', '准备，拉', '握紧，来'],
   },
   idle: commonTemplates.idle,
+  warmup: ['硬拉？有点猛！注意腰部', '来，硬拉走起！腰给我挺直了', '硬拉开始！背收紧，杠铃贴腿走'],
 };
 
 // ============ 俯卧撑专属 ============
@@ -104,6 +109,7 @@ const pushupTemplates: CoachingTemplates = {
     transition: ['继续', '下一个', '别停'],
   },
   idle: commonTemplates.idle,
+  warmup: ['俯卧撑走起！身体给我成一条线', '来，撑起来！别塌腰', '俯卧撑时间！先来几个标准的'],
 };
 
 // ============ 弓步蹲专属 ============
@@ -123,6 +129,7 @@ const lungeTemplates: CoachingTemplates = {
     transition: ['换腿', '准备下一个', '稳住节奏'],
   },
   idle: commonTemplates.idle,
+  warmup: ['弓步蹲！注意前膝别超脚尖', '来，前后脚站稳了再下蹲', '弓步蹲走起！步子迈开点'],
 };
 
 // ============ 平板支撑专属 ============
@@ -150,6 +157,7 @@ const plankTemplates: CoachingTemplates = {
     transition: commonTemplates.byStage.transition,
   },
   idle: commonTemplates.idle,
+  warmup: ['平板支撑！核心绷紧了', '来，撑住！身体一条线', '平板走起！别塌腰别翘屁股'],
 };
 
 // ============ 高抬腿专属 ============
@@ -169,6 +177,7 @@ const highKneeTemplates: CoachingTemplates = {
     transition: ['继续！别停', '加速！', '再来一组'],
   },
   idle: commonTemplates.idle,
+  warmup: ['高抬腿！膝盖给我抬到腰', '来，跑起来！抬腿抬腿', '高抬腿走起！节奏跟上'],
 };
 
 // ============ 开合跳专属 ============
@@ -188,6 +197,7 @@ const jumpingJackTemplates: CoachingTemplates = {
     transition: ['继续跳', '加速！', '别停'],
   },
   idle: commonTemplates.idle,
+  warmup: ['开合跳！手脚同步起来', '来，跳起来！打开合拢打开合拢', '开合跳走起！节奏感拿住'],
 };
 
 // ============ 运动模板映射 ============
@@ -264,14 +274,14 @@ export function generateQuickCoaching(
   }
 
   if (quality === 'perfect' || quality === 'good') {
-    // 30% 概率夸一句，70% 安静（别太啰嗦）
-    if (Math.random() < 0.3) {
+    // 50% 概率夸一句
+    if (Math.random() < 0.5) {
       return { text: pickRandom(templates.byQuality[quality]), isMilestone: false };
     }
   }
 
-  // 3. 阶段话术（低概率，别太啰嗦）
-  if (Math.random() < 0.2) {
+  // 3. 阶段话术
+  if (Math.random() < 0.3) {
     const stageKey = stage as keyof typeof templates.byStage;
     if (templates.byStage[stageKey]) {
       return { text: pickRandom(templates.byStage[stageKey]), isMilestone: false };
@@ -287,6 +297,14 @@ export function generateQuickCoaching(
  */
 export function generateIdleCoaching(): string {
   return pickRandom(commonTemplates.idle);
+}
+
+/**
+ * 生成暖场开场白（训练开始时）
+ */
+export function generateWarmupCoaching(exercise: string): string {
+  const templates = EXERCISE_TEMPLATES[exercise] || commonTemplates;
+  return pickRandom(templates.warmup || commonTemplates.warmup);
 }
 
 /**
