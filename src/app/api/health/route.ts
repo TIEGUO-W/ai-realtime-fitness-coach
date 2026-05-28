@@ -37,7 +37,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const sessionId = body.sessionId || body.session_id || 'default';
+    // URL query param 优先于 body（快捷指令通过 URL 传 sessionId）
+    const sessionId = req.nextUrl.searchParams.get('sessionId')
+      || body.sessionId || body.session_id
+      || 'default';
 
     // 支持多种心率字段名（兼容快捷指令的各种写法）
     const heartRate = body.heartRate ?? body.heart_rate ?? body.value ?? body.bpm ?? undefined;

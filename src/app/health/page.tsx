@@ -145,22 +145,23 @@ export default function HealthPage() {
           <CardContent className="p-4 space-y-3">
             <h2 className="text-sm font-semibold">连接 Apple Health</h2>
             <p className="text-xs text-[#8B8FA3]">
-              通过 iPhone 快捷指令授权读取心率、睡眠数据。教练会据此调整训练强度。
+              一键导入心率、睡眠数据。教练会根据身体状况调整训练强度。
             </p>
 
-            <div className="bg-[#0A0C12] rounded-lg p-3 text-xs text-[#8B8FA3] space-y-1.5">
-              <div className="text-[#E8E9ED] font-medium">iPhone 设置步骤：</div>
-              <div>1. 打开"快捷指令"App</div>
-              <div>2. 新建快捷指令 → 添加"查找健康样本"（心率）</div>
-              <div>3. 添加"获取 URL 内容" → POST 到：</div>
-              <code className="block bg-[#1A1D27] px-2 py-1 rounded text-[#22D3A7] text-[10px] break-all mt-1">
-                {`${typeof window !== 'undefined' ? window.location.origin : ''}/api/health`}
-              </code>
-              <div className="mt-1">4. 请求正文选 JSON，内容为：</div>
-              <code className="block bg-[#1A1D27] px-2 py-1 rounded text-[#22D3A7] text-[10px] whitespace-pre-wrap">
-                {`{"sessionId": "${sessionId}", "heartRate": 心率值}`}
-              </code>
-            </div>
+            <Button
+              onClick={() => {
+                const apiUrl = `${window.location.origin}/api/health?sessionId=${encodeURIComponent(sessionId)}`;
+                window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent('上传心率')}&input=${encodeURIComponent(apiUrl)}`;
+              }}
+              className="w-full bg-white hover:bg-white/90 text-black text-sm py-6"
+            >
+              <span className="mr-2 text-lg"></span>
+              连接 Apple Health
+            </Button>
+
+            <p className="text-[10px] text-[#8B8FA3]/50 text-center">
+              首次使用需先安装快捷指令。仅读取心率数据，不上传个人信息。
+            </p>
 
             {/* Live health data */}
             {health?.heartRate && (
