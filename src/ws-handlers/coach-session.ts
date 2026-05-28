@@ -293,11 +293,11 @@ export class CoachSession {
   private emitGreeting(): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
     const greetings = [
-      '嘿！我来了，准备好了吗？',
-      '教练上线！来，咱们开练？',
-      '哟，来了啊！等你半天了',
-      '准备好了吗？今天练点啥？',
-      '我在这儿呢，随时可以开始！',
+      '哟，来了？你的脂肪已经瑟瑟发抖了',
+      '教练上线！今天不练哭你别想走',
+      '嘿！等你好久了，再不来我就去练了',
+      '来了来了！你的肉已经准备好搬家了',
+      '哟！终于来了？我还以为你放我鸽子呢',
     ];
     const text = greetings[Math.floor(Math.random() * greetings.length)];
     console.log('[CoachSession] emitGreeting:', text);
