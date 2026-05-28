@@ -198,10 +198,20 @@ export class PoseAlgorithmEngine {
     stageConfirmCount: number;
   }> = {};
 
-  // 自适应标定
+  // 自适应标定（深蹲用）
   private calibrationSamples: number[] = [];
   private calibrated = false;
   private baselineKnee = 170;
+
+  // 每运动独立标定
+  private calibrations: Record<string, { samples: number[]; baseline: number; ready: boolean }> = {};
+
+  private getCalibration(exercise: string) {
+    if (!this.calibrations[exercise]) {
+      this.calibrations[exercise] = { samples: [], baseline: 0, ready: false };
+    }
+    return this.calibrations[exercise];
+  }
 
   // 深蹲标定用临时状态
   private pendingStage: ExerciseStage | null = null;
@@ -212,6 +222,7 @@ export class PoseAlgorithmEngine {
     this.calibrationSamples = [];
     this.calibrated = false;
     this.baselineKnee = 170;
+    this.calibrations = {};
     this.pendingStage = null;
     this.stageCounter = 0;
   }
@@ -455,7 +466,7 @@ export class PoseAlgorithmEngine {
       case 'plank':
         return { stage: 'holding', primaryValue: angles.bodyLineAngle };
       case 'jumping_jack':
-        return this.recognizeJumpingJack(cleaning, angles);
+        return this.recognizeJumpingJack(cleaning, angles, st);
       case 'high_knees':
         return this.recognizeHighKnees(cleaning, st);
       default:
@@ -552,19 +563,78 @@ export class PoseAlgorithmEngine {
     return { stage: ps, primaryValue: value };
   }
 
-  /** 开合跳 */
+  /** 开合跳：自适应标定 + 双指标 + 时序确认（姿态快照策略） */
   private recognizeJumpingJack(
     cleaning: CleaningResult,
     angles: JointAngles,
+    st: ReturnType<typeof this.state>,
   ): { stage: ExerciseStage; primaryValue: number | null } {
     const stance = angles.stanceWidth;
     const sw = shoulderWidthKp(cleaning.keypoints);
     const handsUp = handsAboveShoulders(cleaning.keypoints);
     if (stance === null || sw === null) return { stage: 'unknown', primaryValue: null };
     const ratio = stance / Math.max(sw, 0.0001);
-    if (ratio >= 1.55 && handsUp) return { stage: 'open', primaryValue: ratio };
-    if (ratio <= 1.15 && !handsUp) return { stage: 'closed', primaryValue: ratio };
-    return { stage: 'transition', primaryValue: ratio };
+
+    const cal = this.getCalibration('jumping_jack');
+
+    // 自适应标定：前 8 帧在闭合姿态时采样站距/肩宽比
+    if (!cal.ready) {
+      // 只在手放下时采样（更可能是闭合姿态）
+      if (!handsUp) {
+        cal.samples.push(ratio);
+        if (cal.samples.length >= CALIBRATION_FRAMES) {
+          cal.baseline = cal.samples.reduce((a, b) => a + b, 0) / cal.samples.length;
+          cal.ready = true;
+          console.log(`[calibrated] jumping_jack baselineRatio=${cal.baseline.toFixed(3)}`);
+        }
+      }
+      return { stage: 'closed', primaryValue: ratio };
+    }
+
+    const bl = cal.baseline;
+    // open: 站距明显大于闭合基线 AND 手过头
+    // closed: 站距接近基线 AND 手放下
+    const openThreshold = bl * 1.35;
+    const closedThreshold = bl * 1.12;
+
+    const isOpen = ratio >= openThreshold && handsUp;
+    const isClosed = ratio <= closedThreshold && !handsUp;
+
+    let ns: ExerciseStage;
+    if (isOpen) {
+      ns = 'open';
+    } else if (isClosed) {
+      ns = 'closed';
+    } else {
+      ns = 'transition';
+    }
+
+    // 时序确认（防止快速运动中的抖动误判）
+    return this.confirmStage(ns, st);
+  }
+
+  /** 时序确认：连续 CONFIRM_FRAMES 帧同一阶段才切换 */
+  private confirmStage(
+    newStage: ExerciseStage,
+    st: ReturnType<typeof this.state>,
+  ): { stage: ExerciseStage; primaryValue: number | null } {
+    const ps = st.previousStage as string;
+    const prevPending = (st as any)._pendingStage as string | undefined;
+
+    if (newStage !== prevPending) {
+      (st as any)._pendingStage = newStage;
+      (st as any)._pendingCount = 1;
+    } else {
+      (st as any)._pendingCount = ((st as any)._pendingCount || 0) + 1;
+    }
+
+    if ((st as any)._pendingCount >= CONFIRM_FRAMES && newStage !== ps) {
+      (st as any)._pendingCount = 0;
+      (st as any)._pendingStage = undefined;
+      return { stage: newStage, primaryValue: null };
+    }
+
+    return { stage: ps as ExerciseStage, primaryValue: null };
   }
 
   /** 高抬腿 */
@@ -674,9 +744,33 @@ export class PoseAlgorithmEngine {
       score -= 25; errors.push('body_line_not_straight');
     }
 
-    // 开合跳在过渡态
-    if (exercise === 'jumping_jack' && stage === 'transition') {
-      score -= 10; warnings.push('range_not_clear');
+    // 开合跳专项质量
+    if (exercise === 'jumping_jack') {
+      const handsUp = handsAboveShoulders(kp);
+      const stance = angles.stanceWidth;
+      const sw = shoulderWidthKp(kp);
+      const ratio = stance && sw ? stance / sw : 0;
+
+      // 手臂没举过头
+      if (stage === 'open' && !handsUp) {
+        score -= 20; errors.push('arms_not_raised');
+      }
+      // 腿没分够（在 open 阶段站距不够宽）
+      if (stage === 'open' && ratio > 0 && ratio < 1.3) {
+        score -= 15; errors.push('legs_not_wide_enough');
+      }
+      // 闭合时手臂没放下
+      if (stage === 'closed' && handsUp) {
+        score -= 10; warnings.push('arms_not_down');
+      }
+      // 手脚不同步（过渡态持续太久 = 不协调）
+      if (stage === 'transition') {
+        score -= 15; warnings.push('not_synchronized');
+      }
+      // 动作幅度不够（open 阶段 ratio 太小，但排除过渡态抖动）
+      if (stage === 'open' && ratio > 0 && ratio < 1.5) {
+        score -= 10; warnings.push('limited_range');
+      }
     }
 
     // 高抬腿没抬够
