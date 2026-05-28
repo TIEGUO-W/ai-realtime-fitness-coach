@@ -88,6 +88,8 @@ export default function PoseCoach() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [modelReady, setModelReady] = useState(false);
+  const [qrUrl, setQrUrl] = useState('');
+  const [showQr, setShowQr] = useState(false);
   const [effectFlash, setEffectFlash] = useState<'perfect' | 'excellent' | 'good' | 'adjust' | 'warning' | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
@@ -261,6 +263,11 @@ export default function PoseCoach() {
   // session ID
   useEffect(() => {
     sessionIdRef.current = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }, []);
+
+  // QR 码 URL 初始化（客户端）
+  useEffect(() => {
+    setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/health`)}&bgcolor=0F1117&color=E8E9ED`);
   }, []);
 
   // FPS 统计
@@ -932,20 +939,18 @@ export default function PoseCoach() {
 
         {/* 扫码连接健康数据 */}
         <div className="border-b border-[#1A1D27] px-5 py-3">
-          <div className="flex items-center gap-3">
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/health` : '/health')}&bgcolor=0F1117&color=E8E9ED`}
-              alt="扫码连接健康数据"
-              className="h-20 w-20 rounded-lg border border-[#1A1D27]"
-            />
-            <div>
-              <div className="text-xs font-medium">扫码连接健康数据</div>
-              <div className="text-[10px] text-[#8B8FA3] mt-0.5">
-                手机扫码 → 填资料 → 授权 Apple Health<br />
-                教练会根据你的身体状况调整训练
-              </div>
+          <button
+            onClick={() => setShowQr(true)}
+            className="w-full flex items-center gap-3 rounded-lg bg-[#1A1D27]/50 px-3 py-2 hover:bg-[#252836] transition-colors"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0A0C12] text-lg">
+              📱
             </div>
-          </div>
+            <div className="text-left">
+              <div className="text-xs font-medium">扫码连接健康数据</div>
+              <div className="text-[10px] text-[#8B8FA3] mt-0.5">手机扫码填资料、授权 Apple Health</div>
+            </div>
+          </button>
         </div>
 
         {/* 当前反馈 */}
@@ -1094,6 +1099,33 @@ export default function PoseCoach() {
           </div>
         </div>
       </div>
+
+      {/* QR 码弹窗 */}
+      {showQr && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setShowQr(false)}
+        >
+          <div
+            className="rounded-2xl bg-[#0F1117] border border-[#1A1D27] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center mb-4">
+              <h3 className="text-base font-semibold">扫码连接健康数据</h3>
+              <p className="text-xs text-[#8B8FA3] mt-1">手机扫码 → 填资料 → 授权 Apple Health</p>
+            </div>
+            {qrUrl && (
+              <img src={qrUrl} alt="QR码" className="h-52 w-52 rounded-xl border border-[#1A1D27] mx-auto" />
+            )}
+            <Button
+              onClick={() => setShowQr(false)}
+              className="w-full mt-4 bg-[#1A1D27] hover:bg-[#252836] text-sm"
+            >
+              关闭
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
