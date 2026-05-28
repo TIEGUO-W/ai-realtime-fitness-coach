@@ -941,14 +941,17 @@ export default function PoseCoach() {
         <div className="border-b border-[#1A1D27] px-5 py-3">
           <button
             onClick={() => setShowQr(true)}
-            className="w-full flex items-center gap-3 rounded-lg bg-[#1A1D27]/50 px-3 py-2 hover:bg-[#252836] transition-colors"
+            className="w-full flex items-center gap-3 rounded-lg border border-[#00E5FF]/30 bg-[#00E5FF]/5 px-3 py-2.5 hover:bg-[#00E5FF]/10 transition-colors"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0A0C12] text-lg">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#00E5FF]/15 text-lg">
               📱
             </div>
             <div className="text-left">
-              <div className="text-xs font-medium">扫码连接健康数据</div>
+              <div className="text-xs font-medium text-[#E8E9ED]">扫码连接健康数据</div>
               <div className="text-[10px] text-[#8B8FA3] mt-0.5">手机扫码填资料、授权 Apple Health</div>
+            </div>
+            <div className="ml-auto text-[#00E5FF]/60">
+              <span className="text-sm">QR</span>
             </div>
           </button>
         </div>
