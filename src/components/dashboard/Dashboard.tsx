@@ -64,7 +64,7 @@ export default function Dashboard() {
 
   // PoseCoach state
   const [isRunning, setIsRunning] = useState(false);
-  const [selectedExercise, setSelectedExercise] = useState('auto');
+  const [selectedExercise, setSelectedExercise] = useState('squat');
   const [wsConnected, setWsConnected] = useState(false);
   const [repCount, setRepCount] = useState(0);
   const [detectedExercise, setDetectedExercise] = useState('');
