@@ -111,6 +111,7 @@ export default function Dashboard() {
     const nextUrl = audioQueueRef.current.shift();
     if (!nextUrl) return;
 
+    console.log('[TTS] playNextInQueue, fetching:', nextUrl.substring(0, 60));
     isPlayingRef.current = true;
     setIsSpeaking(true);
     try {
@@ -122,15 +123,20 @@ export default function Dashboard() {
         URL.revokeObjectURL(blobUrl);
         isPlayingRef.current = false;
         setIsSpeaking(false);
+        console.log('[TTS] audio onended, playing next if any');
         playNextInQueue(); // play next in queue
       };
       audio.onerror = () => {
+        URL.revokeObjectURL(blobUrl);
         isPlayingRef.current = false;
         setIsSpeaking(false);
+        console.log('[TTS] audio onerror');
         playNextInQueue(); // continue queue on error
       };
       await audio.play();
-    } catch {
+      console.log('[TTS] audio.play() started');
+    } catch (err) {
+      console.error('[TTS] playNextInQueue error:', err);
       isPlayingRef.current = false;
       setIsSpeaking(false);
       playNextInQueue(); // continue queue on error
@@ -139,6 +145,7 @@ export default function Dashboard() {
 
   // Enqueue audio URL for sequential playback
   const enqueueAudio = useCallback((audioUrl: string) => {
+    console.log('[TTS] enqueueAudio, queue length:', audioQueueRef.current.length, 'isPlaying:', isPlayingRef.current);
     audioQueueRef.current.push(audioUrl);
     if (!isPlayingRef.current) {
       playNextInQueue();
@@ -212,7 +219,10 @@ export default function Dashboard() {
       }
       case 'tts_ready': {
         const tts = msg.payload as TTSReadyPayload;
-        enqueueAudio(tts.audioUrl);
+        console.log('[TTS] tts_ready received, audioUrl:', tts.audioUrl?.substring(0, 80));
+        if (tts.audioUrl) {
+          enqueueAudio(tts.audioUrl);
+        }
         break;
       }
       case 'remote_frame': {
@@ -226,11 +236,33 @@ export default function Dashboard() {
         setRpiConnected(status.connected);
         break;
       }
-      case 'voice_command_result': {
+      case 'voice_command_result':
+      case 'voice_reply': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = msg.payload as any;
-        if (p.reply) {
-          setVoiceMessages(prev => [...prev.slice(-9), { from: 'coach', text: p.reply }]);
+        if (p.reply || p.text) {
+          setVoiceMessages(prev => [...prev.slice(-9), { from: 'coach', text: p.reply || p.text }]);
+          // 语音回复也更新教练面板
+          setData(prev => ({
+            ...prev,
+            assistant: { ...prev.assistant, message: p.reply || p.text },
+          }));
+        }
+        break;
+      }
+      case 'voice_recognized': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as any;
+        if (p.text) {
+          setVoiceMessages(prev => [...prev.slice(-9), { from: 'user', text: p.text }]);
+        }
+        break;
+      }
+      case 'voice_reply_tts': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as any;
+        if (p.audioUrl) {
+          enqueueAudio(p.audioUrl);
         }
         break;
       }

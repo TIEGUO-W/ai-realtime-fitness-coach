@@ -60,9 +60,10 @@ export class TTSQueue {
   }
 
   private speakNow(text: string, priority: TtsPriority): void {
+    console.log(`[TTSQueue] speakNow: priority=${priority}, text="${text.slice(0, 30)}"`);
     this.isSpeaking = true;
     Promise.resolve(this.onSpeak?.(text, priority))
-      .catch(() => {})
+      .catch((err) => { console.error('[TTSQueue] speakNow error:', err); })
       .finally(() => {
         this.isSpeaking = false;
         this.flush();

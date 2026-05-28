@@ -147,6 +147,7 @@ export class CoachSession {
     // 决策 → 同步发话术（模板路径，不调 LLM）
     const decision = this.shouldSpeak(result);
     if (decision.should) {
+      console.log(`[CoachSession] observePose 决策: should=true, trigger=${decision.trigger}, urgency=${decision.urgency}`);
       this.emitCoaching(result, decision);
     }
   }
@@ -490,12 +491,14 @@ export class CoachSession {
 
   private async synthAndSend(text: string): Promise<void> {
     try {
+      console.log('[CoachSession] synthAndSend 开始:', text.slice(0, 30));
       const client = this.getTTSClient();
       const result = await client.synthesize({
         uid: 'coach-session',
         text,
         speaker: 'zh_female_xiaohe_uranus_bigtts',
       });
+      console.log('[CoachSession] synthAndSend 结果:', result.audioUri ? '成功 ' + result.audioUri.slice(0, 60) : '无 audioUri');
       if (result.audioUri) {
         this.send({
           type: 'tts_ready',
