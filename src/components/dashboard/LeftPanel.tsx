@@ -218,7 +218,16 @@ export default function LeftPanel({
   }, []);
 
   useEffect(() => {
-    setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/health`)}&bgcolor=0F1117&color=E8E9ED`);
+    // 优先用环境变量，其次用当前域名；localhost 替换为 LAN IP 供手机扫码
+    let origin = process.env.NEXT_PUBLIC_BASE_URL || window.location.origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      origin = `http://${window.location.hostname}:5000`;  // fallback: 同端口当前host
+      // 如果 hostname 也是 localhost，用固定 LAN IP
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        origin = 'http://172.27.9.109:5000';
+      }
+    }
+    setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${origin}/health`)}&bgcolor=0F1117&color=E8E9ED`);
   }, []);
 
   return (
