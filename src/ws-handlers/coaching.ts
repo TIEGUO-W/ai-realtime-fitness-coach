@@ -16,6 +16,23 @@ import { ASRClient, Config } from 'coze-coding-dev-sdk';
 
 const ALGORITHM_INTERVAL_MS = 100; // 算法推送 ~10fps
 
+/** 前端运动ID → 算法运动ID 映射 */
+const EXERCISE_ALIAS: Record<string, string> = {
+  pushup: 'push_up',
+  push_up: 'push_up',
+  deadlift: 'squat',       // 算法暂不支持硬拉，用深蹲逻辑兜底
+  squat: 'squat',
+  plank: 'plank',
+  lunge: 'lunge',
+  jumping_jack: 'jumping_jack',
+  high_knees: 'high_knees',
+  sit_up: 'sit_up',
+};
+
+function normalizeExercise(raw: string): string {
+  return EXERCISE_ALIAS[raw] || 'squat';
+}
+
 let asrClient: ASRClient | null = null;
 function getASRClient(): ASRClient {
   if (!asrClient) {
@@ -47,8 +64,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
 
     if (msg.type === 'set_exercise') {
       const raw = (msg.payload as { exercise: string }).exercise || 'squat';
-      const supported = ['squat', 'push_up', 'plank', 'lunge', 'jumping_jack', 'high_knees', 'sit_up'];
-      currentExercise = supported.includes(raw) ? raw : 'squat';
+      currentExercise = normalizeExercise(raw);
       session.setExercise(currentExercise);
       algorithm.reset();
       return;
@@ -80,8 +96,8 @@ export function handleCoachingConnection(ws: WebSocket): void {
         // 控制类命令：本地执行
         const intent = parseVoiceCommand(recognizedText);
         if (intent.action === 'switch_exercise') {
-          currentExercise = intent.exercise;
-          session.setExercise(intent.exercise);
+          currentExercise = normalizeExercise(intent.exercise);
+          session.setExercise(currentExercise);
           algorithm.reset();
           safeSend(ws, { type: 'set_exercise', payload: { exercise: intent.exercise } });
         } else if (intent.action === 'reset') {
