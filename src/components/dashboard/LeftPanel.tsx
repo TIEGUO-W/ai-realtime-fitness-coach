@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import type { DashboardData, CoachPersonality, CoachVoice } from '@/types/dashboard';
+import type { DashboardData, CoachPersonality, CoachVoice, ChatMessage } from '@/types/dashboard';
 import {
   MONSTER_MODELS,
   computeIntensity,
@@ -23,6 +23,7 @@ interface LeftPanelProps {
   onVoiceChange: (v: CoachVoice) => void;
   isSpeaking?: boolean;
   coachMessage?: string;
+  chatMessages?: ChatMessage[];
 }
 
 function intensityColor(i: number): string {
@@ -82,6 +83,7 @@ export default function LeftPanel({
   onVoiceChange,
   isSpeaking = false,
   coachMessage = '',
+  chatMessages = [],
 }: LeftPanelProps) {
   const { assistant, biometrics, workout } = data;
 
@@ -217,19 +219,16 @@ export default function LeftPanel({
     setSplineLoading(false);
   }, [stopTalking]);
 
-  const handleSelectModel = useCallback(
-    (id: string) => {
-      stopTalking();
-      setMode('manual');
-      setManualId(id);
-      setPopupOpen(false);
-      setSplineKey(k => k + 1);
-      setSplineLoading(true);
-    },
-    [stopTalking],
-  );
+  const handleSelectModel = (id: string) => {
+    stopTalking();
+    setMode('manual');
+    setManualId(id);
+    setPopupOpen(false);
+    setSplineKey(k => k + 1);
+    setSplineLoading(true);
+  };
 
-  const handleAutoMode = useCallback(() => {
+  const handleAutoMode = () => {
     setMode('auto');
     setPopupOpen(false);
     if (autoModel.id !== activeModel.id) {
@@ -237,7 +236,7 @@ export default function LeftPanel({
       setSplineKey(k => k + 1);
       setSplineLoading(true);
     }
-  }, [autoModel, activeModel, stopTalking]);
+  };
 
   // Track speaking state with ref to avoid re-render dependency issues
   const prevIsSpeakingRef = useRef(false);
@@ -290,10 +289,29 @@ export default function LeftPanel({
             </span>
           )}
         </div>
-        <p className={`text-base font-semibold leading-relaxed ${assistant.isAlert ? 'text-red-100' : 'text-white'}`}>
-          &ldquo;{assistant.message}&rdquo;
-        </p>
-        <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-500 font-mono">
+
+        {/* 气泡式对话历史 */}
+        <div className="flex flex-col gap-2 max-h-[200px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+          {chatMessages && chatMessages.length > 0 ? (
+            chatMessages.slice(-8).map((msg) => (
+              <div key={msg.timestamp} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] px-3 py-1.5 rounded-xl text-[13px] leading-snug ${
+                  msg.from === 'user'
+                    ? 'bg-cyber-cyan/20 border border-cyber-cyan/30 text-cyan-100 rounded-br-sm'
+                    : 'bg-slate-800/80 border border-slate-700/50 text-slate-200 rounded-bl-sm'
+                }`}>
+                  {msg.text}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className={`text-base font-semibold leading-relaxed ${assistant.isAlert ? 'text-red-100' : 'text-white'}`}>
+              &ldquo;{assistant.message}&rdquo;
+            </p>
+          )}
+        </div>
+
+        <div className="mt-2 flex items-center gap-4 text-[11px] text-slate-500 font-mono">
           <span>心率 {biometrics.heartRate} BPM</span>
           <span>分数 {workout.score}</span>
           <span>动作 {workout.currentAction}</span>

@@ -5,7 +5,7 @@ import LeftPanel from './LeftPanel';
 import RightPanel, { EXERCISE_LABELS } from './RightPanel';
 import CustomPlanModal from './CustomPlanModal';
 import WorkoutSummaryModal from './WorkoutSummaryModal';
-import type { DashboardData, CoachPersonality, CoachVoice, Workout, Biometrics } from '@/types/dashboard';
+import type { DashboardData, CoachPersonality, CoachVoice, Workout, Biometrics, ChatMessage } from '@/types/dashboard';
 import { mockData } from '@/data/mockData';
 
 import { triggerHighScore, triggerLowScore, triggerWorkoutComplete } from '@/utils/confettiEffects';
@@ -57,6 +57,7 @@ export default function Dashboard() {
   const [voice, setVoice] = useState<CoachVoice>('female_soft');
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [summaryModalOpen, setSummaryModalOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [snapshot, setSnapshot] = useState<WorkoutSnapshot | null>(null);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const startTimeRef = useRef(Date.now());
@@ -80,6 +81,7 @@ export default function Dashboard() {
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const frameBufferRef = useRef<Landmark[][]>([]);
+  const pendingVoiceRef = useRef<string[]>([]);
   const lastFrameSentRef = useRef<number>(0);
 
   // Dashboard data derived from WS state
@@ -115,7 +117,11 @@ export default function Dashboard() {
   // Play next audio in queue (priority sorted)
   const playNextInQueue = useCallback(async () => {
     if (isPlayingRef.current) return;
-    if (audioQueueRef.current.length === 0) return;
+    if (audioQueueRef.current.length === 0) {
+      // TTS queue empty — flush any buffered voice commands
+      flushPendingVoice();
+      return;
+    }
 
     // Sort by priority: high first
     audioQueueRef.current.sort((a, b) => {
@@ -158,6 +164,20 @@ export default function Dashboard() {
       isPlayingRef.current = false;
       setIsSpeaking(false);
       playNextInQueue();
+    }
+  }, []);
+
+  // Flush buffered voice commands after TTS queue is empty
+  const flushPendingVoice = useCallback(() => {
+    if (pendingVoiceRef.current.length === 0) return;
+    const commands = [...pendingVoiceRef.current];
+    pendingVoiceRef.current = [];
+    console.log('[Voice] Flushing buffered commands:', commands.length);
+    for (const text of commands) {
+      wsRef.current?.send({
+        type: 'voice_command',
+        payload: { text, sessionId: sessionIdRef.current },
+      });
     }
   }, []);
 
@@ -238,6 +258,9 @@ export default function Dashboard() {
             modelId: prev.assistant.modelId,
           },
         }));
+        if (coachMsg) {
+          setChatMessages(prev => [...prev.slice(-19), { from: 'coach' as const, text: coachMsg, timestamp: Date.now() }]);
+        }
         break;
       }
       case 'tts_ready': {
@@ -254,12 +277,15 @@ export default function Dashboard() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = msg.payload as any;
         if (p.reply || p.text) {
-          setVoiceMessages(prev => [...prev.slice(-9), { from: 'coach', text: p.reply || p.text }]);
-          // 语音回复也更新教练面板
+          const replyText = stripUrls(p.reply || p.text);
+          setVoiceMessages(prev => [...prev.slice(-9), { from: 'coach', text: replyText }]);
           setData(prev => ({
             ...prev,
-            assistant: { ...prev.assistant, message: p.reply || p.text },
+            assistant: { ...prev.assistant, message: replyText },
           }));
+          if (replyText) {
+            setChatMessages(prev => [...prev.slice(-19), { from: 'coach' as const, text: replyText, timestamp: Date.now() }]);
+          }
         }
         break;
       }
@@ -268,6 +294,7 @@ export default function Dashboard() {
         const p = msg.payload as any;
         if (p.text) {
           setVoiceMessages(prev => [...prev.slice(-9), { from: 'user', text: p.text }]);
+          setChatMessages(prev => [...prev.slice(-19), { from: 'user' as const, text: p.text, timestamp: Date.now() }]);
         }
         break;
       }
@@ -531,10 +558,16 @@ export default function Dashboard() {
         const text = last[0].transcript.trim();
         if (text) {
           setVoiceMessages(prev => [...prev.slice(-9), { from: 'user', text }]);
-          wsRef.current?.send({
-            type: 'voice_command',
-            payload: { text, sessionId: sessionIdRef.current },
-          });
+          // TTS 播放中暂存，播完再发
+          if (isPlayingRef.current) {
+            console.log('[Voice] TTS playing, buffering command:', text);
+            pendingVoiceRef.current.push(text);
+          } else {
+            wsRef.current?.send({
+              type: 'voice_command',
+              payload: { text, sessionId: sessionIdRef.current },
+            });
+          }
         }
       }
     };
@@ -678,6 +711,7 @@ export default function Dashboard() {
           onVoiceChange={setVoice}
           isSpeaking={isSpeaking}
           coachMessage={currentCoachMsgRef.current}
+          chatMessages={chatMessages}
         />
       </div>
 
@@ -700,6 +734,7 @@ export default function Dashboard() {
           selectedExercise={selectedExercise}
           onExerciseChange={setSelectedExercise}
           voiceEnabled={voiceEnabled}
+          voiceListening={voiceEnabled && isRunning}
           onVoiceToggle={() => setVoiceEnabled(v => !v)}
           poseDetected={poseDetected}
           modelReady={modelReady}

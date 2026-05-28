@@ -12,7 +12,7 @@ import { LLMClient, TTSClient, Config } from 'coze-coding-dev-sdk';
 // ─── 类型 ──────────────────────────────────────
 
 export type Priority = 'high' | 'medium' | 'low';
-export type Trigger = 'voice' | 'pose_quality_drop' | 'pose_rep' | 'pose_milestone' | 'timer_idle' | 'timer_periodic';
+export type Trigger = 'voice' | 'pose_quality_drop' | 'pose_rep' | 'pose_milestone' | 'pose_periodic' | 'timer_idle' | 'timer_periodic';
 
 interface ConversationMessage {
   role: 'user' | 'coach' | 'system';
@@ -300,14 +300,28 @@ export class CoachSession {
       return { should: true, urgency: 'medium', trigger: 'pose_milestone', useLLM: false, fallbackText: fb.text };
     }
 
-    // 5. 完成一次 → 30% 概率鼓励
-    if (result.completedRep && Math.random() < 0.3) {
-      const q = result.quality.qualityScore >= 90 ? 'perfect' as const
-        : result.quality.qualityScore >= 75 ? 'good' as const
-        : result.quality.qualityScore >= 50 ? 'adjust' as const
+    // 5. 完成一次 → 高概率鼓励（确保几乎每次都有反馈）
+    if (result.completedRep) {
+      const speakChance = result.repCount <= 3 ? 1.0   // 前3次必说
+        : result.repCount <= 10 ? 0.8                    // 4-10次 80%
+        : 0.5;                                           // 10次以上 50%（避免太啰嗦）
+      if (Math.random() < speakChance) {
+        const q = result.quality.qualityScore >= 90 ? 'perfect' as const
+          : result.quality.qualityScore >= 75 ? 'good' as const
+          : result.quality.qualityScore >= 50 ? 'adjust' as const
+          : 'warning' as const;
+        const fb = generateQuickCoaching(result.exercise, result.stage, q, result.repCount);
+        return { should: true, urgency: 'medium', trigger: 'pose_rep', useLLM: false, fallbackText: fb.text };
+      }
+    }
+
+    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（6秒+）
+    if (this.recentQualityScores.length >= 3 && now - this.lastSpeechTime > 6000) {
+      const q = result.quality.qualityScore >= 85 ? 'good' as const
+        : result.quality.qualityScore >= 60 ? 'adjust' as const
         : 'warning' as const;
       const fb = generateQuickCoaching(result.exercise, result.stage, q, result.repCount);
-      return { should: true, urgency: 'medium', trigger: 'pose_rep', useLLM: false, fallbackText: fb.text };
+      return { should: true, urgency: 'low', trigger: 'pose_periodic', useLLM: false, fallbackText: fb.text };
     }
 
     return no;

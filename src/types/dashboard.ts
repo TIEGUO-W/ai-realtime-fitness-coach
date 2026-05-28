@@ -26,6 +26,12 @@ export interface Assistant {
   modelId: string;
 }
 
+export interface ChatMessage {
+  from: 'user' | 'coach';
+  text: string;
+  timestamp: number;
+}
+
 export interface DashboardData {
   environment: Environment;
   workout: Workout;

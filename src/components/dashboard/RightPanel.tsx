@@ -21,6 +21,7 @@ interface RightPanelProps {
   onExerciseChange: (exercise: string) => void;
   // Voice toggle
   voiceEnabled: boolean;
+  voiceListening?: boolean;
   onVoiceToggle: () => void;
   // Status indicators
   poseDetected: boolean;
@@ -58,6 +59,7 @@ export default function RightPanel({
   selectedExercise,
   onExerciseChange,
   voiceEnabled,
+  voiceListening,
   onVoiceToggle,
   poseDetected,
   modelReady,
@@ -107,6 +109,15 @@ export default function RightPanel({
           >
             {voiceEnabled ? '🎙 语音ON' : '🎙 语音OFF'}
           </button>
+          {voiceEnabled && voiceListening && (
+            <span className="flex items-center gap-1 text-[10px] font-mono text-cyber-cyan">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyber-cyan opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyber-cyan"></span>
+              </span>
+              监听中
+            </span>
+          )}
 
           {modelReady && (
             <span className={`text-[10px] font-mono ${poseDetected ? 'text-green-400' : 'text-slate-500'}`}>
