@@ -60,6 +60,13 @@ export function handleCoachingConnection(ws: WebSocket): void {
       return;
     }
 
+    // 前端传 sessionId 绑定健康数据
+    if (msg.type === 'set_session') {
+      const sid = (msg.payload as { sessionId: string }).sessionId;
+      if (sid) session.setSessionId(sid);
+      return;
+    }
+
     // ── 切换运动 ──────────────────────────────
 
     if (msg.type === 'set_exercise') {

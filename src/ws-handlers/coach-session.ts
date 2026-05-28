@@ -6,6 +6,7 @@ import { TTSQueue, type TtsPriority } from './tts-queue';
 import { CoachPersonality, buildSystemPrompt, type Mood } from './coach-personality';
 import { generateQuickCoaching, generateIdleCoaching, getExerciseName } from './coaching-templates';
 import { parseVoiceCommand, getVoiceCommandReply } from './voice-command';
+import { getHealth, assessHeartRate, sleepAdvice, type WatchHealthData } from '../lib/health-store';
 import { LLMClient, TTSClient, Config } from 'coze-coding-dev-sdk';
 
 // ─── 类型 ──────────────────────────────────────
@@ -83,7 +84,12 @@ export class CoachSession {
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private lastActivityTime = Date.now();
   private currentExercise = 'squat';
-  private llmBusy = false; // 防止 LLM 并发堆积
+  private llmBusy = false;
+
+  // 健康数据
+  private sessionId = '';
+  private healthData: WatchHealthData | null = null;
+  private lastHeartRateWarning = 0;
 
   constructor(ws: WebSocket, config?: Partial<SessionConfig>) {
     this.ws = ws;
@@ -94,6 +100,12 @@ export class CoachSession {
     });
 
     this.startTimers();
+  }
+
+  /** 绑定 session，加载健康档案 */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+    this.healthData = getHealth(sessionId);
   }
 
   // ═══ 公开输入方法 ═══════════════════════════════
@@ -246,6 +258,25 @@ export class CoachSession {
     if (result.quality.qualityScore < 30) {
       const fb = generateQuickCoaching(result.exercise, result.stage, 'error', result.repCount);
       return { should: true, urgency: 'high', trigger: 'pose_quality_drop', useLLM: false, fallbackText: fb.text };
+    }
+
+    // 1.5. 心率超标 → 安全警告（5分钟内不重复）
+    if (this.healthData?.heartRate && this.healthData.profile?.age) {
+      const safety = assessHeartRate(this.healthData.heartRate, this.healthData.profile.age);
+      if (safety.status === 'stop' && now - this.lastHeartRateWarning > 300_000) {
+        this.lastHeartRateWarning = now;
+        return {
+          should: true, urgency: 'high', trigger: 'pose_rep', useLLM: false,
+          fallbackText: `心率${this.healthData.heartRate}了！快停下来休息，别硬撑！`,
+        };
+      }
+      if (safety.status === 'reduce_intensity' && now - this.lastHeartRateWarning > 120_000) {
+        this.lastHeartRateWarning = now;
+        return {
+          should: true, urgency: 'high', trigger: 'pose_rep', useLLM: false,
+          fallbackText: '心率有点高，放慢节奏，别太拼！',
+        };
+      }
     }
 
     // 2. 冷却检查
@@ -408,7 +439,7 @@ export class CoachSession {
       lastCoachMessage: this.lastCoachMessage,
     });
 
-    const messages: Array<{ role: string; content: string }> = [
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
 
@@ -420,12 +451,35 @@ export class CoachSession {
       });
     }
 
-    // 最近对话历史
+    // 健康数据（心率、睡眠等）
+    if (this.healthData) {
+      const h = this.healthData;
+      const parts: string[] = [];
+      if (h.profile) {
+        parts.push(`运动水平: ${h.profile.fitnessLevel}, 目标: ${h.profile.goal}`);
+      }
+      if (h.heartRate) {
+        const safety = h.profile?.age ? assessHeartRate(h.heartRate, h.profile.age) : null;
+        parts.push(`心率: ${h.heartRate}bpm${safety ? ` (${safety.status})` : ''}`);
+      }
+      if (h.sleepQuality) {
+        parts.push(`睡眠: ${h.sleepQuality}${h.sleepHours ? ` (${h.sleepHours}h)` : ''} - ${sleepAdvice(h.sleepQuality)}`);
+      }
+      if (parts.length > 0) {
+        messages.push({
+          role: 'system',
+          content: `[用户健康数据] ${parts.join('; ')}`,
+        });
+      }
+    }
+
+    // 最近对话历史（coach → assistant，LLM API 标准角色）
     const recentHistory = this.history
       .filter(m => m.role !== 'system')
       .slice(-this.config.maxHistoryLength);
     for (const m of recentHistory) {
-      messages.push({ role: m.role, content: m.content });
+      const role = m.role === 'coach' ? 'assistant' as const : m.role as 'user' | 'system';
+      messages.push({ role, content: m.content });
     }
 
     messages.push({ role: 'user', content: userText });
