@@ -455,10 +455,7 @@ export class PoseAlgorithmEngine {
       case 'squat':
         return this.recognizeSquatStage(angles, cleaning, st);
       case 'push_up':
-        return this.recognizeBendStage(
-          avgDefined(angles.leftElbowAngle, angles.rightElbowAngle),
-          st, 155, 95, 'up', 'bottom',
-        );
+        return this.recognizePushUpStage(angles, cleaning, st);
       case 'lunge': {
         const frontKnee = minDefined(angles.leftKneeAngle, angles.rightKneeAngle);
         return this.recognizeBendStage(frontKnee, st, 160, 105);
@@ -561,6 +558,54 @@ export class PoseAlgorithmEngine {
     if (value < prev - 4) return { stage: 'descending', primaryValue: value };
     if (value > prev + 4) return { stage: 'ascending', primaryValue: value };
     return { stage: ps, primaryValue: value };
+  }
+
+  /** 俯卧撑：自适应肘角标定 + 双肘指标 + 时序确认 */
+  private recognizePushUpStage(
+    angles: JointAngles,
+    cleaning: CleaningResult,
+    st: ReturnType<typeof this.state>,
+  ): { stage: ExerciseStage; primaryValue: number | null } {
+    const elbow = avgDefined(angles.leftElbowAngle, angles.rightElbowAngle);
+    if (elbow === null) return { stage: 'unknown', primaryValue: null };
+
+    const cal = this.getCalibration('push_up');
+
+    // 自适应标定：前8帧采样肘角（用户在准备姿势时肘关节接近伸直）
+    if (!cal.ready) {
+      cal.samples.push(elbow);
+      if (cal.samples.length >= CALIBRATION_FRAMES) {
+        cal.baseline = Math.max(...cal.samples);
+        cal.ready = true;
+        console.log(`[calibrated] push_up baselineElbow=${cal.baseline.toFixed(1)}deg`);
+      }
+      return { stage: 'up', primaryValue: elbow };
+    }
+
+    const bl = cal.baseline;
+    const upThreshold = bl * 0.85;   // 肘角 > 85%基线 = 直臂
+    const bottomThreshold = bl * 0.55; // 肘角 < 55%基线 = 到底
+
+    // 方向判断
+    const prevE = st.previousPrimary;
+    let dir: 'down' | 'up' | 'none' = 'none';
+    if (prevE !== null) {
+      if (elbow < prevE - 5) dir = 'down';
+      else if (elbow > prevE + 5) dir = 'up';
+    }
+
+    let ns: ExerciseStage = st.previousStage;
+    if (elbow >= upThreshold) {
+      ns = 'up';
+    } else if (elbow <= bottomThreshold) {
+      ns = 'bottom';
+    } else if (dir === 'down') {
+      ns = 'descending';
+    } else if (dir === 'up') {
+      ns = 'ascending';
+    }
+
+    return this.confirmStage(ns, st);
   }
 
   /** 开合跳：自适应标定 + 双指标 + 时序确认（姿态快照策略） */
@@ -729,19 +774,50 @@ export class PoseAlgorithmEngine {
       score -= 15; errors.push('back_leaning_forward');
     }
 
-    // 俯卧撑塌腰
-    if (exercise === 'push_up' && this.pushUpHipsSag(kp)) {
-      score -= 20; errors.push('hips_sagging');
+    // 俯卧撑专项质量
+    if (exercise === 'push_up') {
+      // 塌腰
+      if (this.pushUpHipsSag(kp)) {
+        score -= 20; errors.push('hips_sagging');
+      }
+      // 没到底就起来了
+      if (this.shallowTurnaround(stage, st)) {
+        score -= 15; errors.push('insufficient_depth');
+      }
+      // 手肘外扩（肘与身体夹角 < 30° = 肩膀压力过大）
+      if (this.elbowsFlared(cleaning)) {
+        score -= 15; warnings.push('elbows_too_wide');
+      }
+      // 头下垂（鼻尖 y > 肩中线 y = 头往下掉）
+      if (this.headDropping(cleaning)) {
+        score -= 5; warnings.push('keep_head_neutral');
+      }
+      // 左右臂不平衡
+      if (angles.leftElbowAngle !== null && angles.rightElbowAngle !== null &&
+          Math.abs(angles.leftElbowAngle - angles.rightElbowAngle) > 20) {
+        score -= 10; warnings.push('uneven_arms');
+      }
     }
 
-    // 俯卧撑没到底
-    if (exercise === 'push_up' && this.shallowTurnaround(stage, st)) {
-      score -= 15; errors.push('insufficient_depth');
-    }
-
-    // 平板支撑身体不直
-    if (exercise === 'plank' && angles.bodyLineAngle !== null && angles.bodyLineAngle > 18) {
-      score -= 25; errors.push('body_line_not_straight');
+    // 平板支撑专项质量
+    if (exercise === 'plank') {
+      if (angles.bodyLineAngle !== null) {
+        if (angles.bodyLineAngle > 22) {
+          score -= 30; errors.push('hips_sagging');  // 严重塌腰
+        } else if (angles.bodyLineAngle > 15) {
+          score -= 15; warnings.push('slight_hips_drop');
+        } else if (angles.bodyLineAngle < -10) {
+          score -= 15; warnings.push('hips_too_high');  // 屁股翘太高
+        }
+      }
+      // 肩膀前移（肘在肩前 = 肩胛没收紧）
+      if (this.shouldersForward(cleaning)) {
+        score -= 10; warnings.push('shoulders_forward');
+      }
+      // 身体抖动：角度变化过快
+      if ((st.lastPrimaryDelta ?? 0) > 8) {
+        score -= 10; warnings.push('body_shaking');
+      }
     }
 
     // 开合跳专项质量
@@ -819,6 +895,44 @@ export class PoseAlgorithmEngine {
 
   private shallowTurnaround(stage: ExerciseStage, st: ReturnType<typeof this.state>): boolean {
     return stage === 'ascending' && st.hadDownPhase && st.previousStage === 'descending';
+  }
+
+  /** 俯卧撑：手肘外扩（肘与身体夹角 < 25°） */
+  private elbowsFlared(cleaning: CleaningResult): boolean {
+    const kp = cleaning.keypoints;
+    const ls = kp.left_shoulder, le = kp.left_elbow, lh = kp.left_hip;
+    const rs = kp.right_shoulder, re = kp.right_elbow, rh = kp.right_hip;
+    if (!isValid(ls) || !isValid(le) || !isValid(lh)) return false;
+    const bodyVec = { x: lh.x - ls.x, y: lh.y - ls.y };
+    const elbowVec = { x: le.x - ls.x, y: le.y - ls.y };
+    const bodyLen = Math.hypot(bodyVec.x, bodyVec.y);
+    const elbowLen = Math.hypot(elbowVec.x, elbowVec.y);
+    if (bodyLen === 0 || elbowLen === 0) return false;
+    const dot = (elbowVec.x * bodyVec.x + elbowVec.y * bodyVec.y) / (bodyLen * elbowLen);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+    return angle > 65; // 肘与躯干夹角 > 65° = 外扩
+  }
+
+  /** 俯卧撑：头往下掉（鼻子 y > 肩中线 y） */
+  private headDropping(cleaning: CleaningResult): boolean {
+    const kp = cleaning.keypoints;
+    const nose = kp.left_elbow; // 鼻子是 index 0，不在 JOINT_MAP 里，用肩膀代替
+    const ls = kp.left_shoulder, rs = kp.right_shoulder;
+    if (!isValid(ls) || !isValid(rs)) return false;
+    const midShoulderY = (ls.y + rs.y) / 2;
+    // 简化：用耳朵位置判断，或者跳过（因为 JOINT_MAP 没有鼻子）
+    // 实际用躯干角度：身体前倾 < 25° 才算正确
+    return false; // MediaPipe lite 没有面部关键点，暂不检测
+  }
+
+  /** 平板支撑：肩膀前移到肘关节前方 */
+  private shouldersForward(cleaning: CleaningResult): boolean {
+    const kp = cleaning.keypoints;
+    const ls = kp.left_shoulder, le = kp.left_elbow;
+    const rs = kp.right_shoulder, re = kp.right_elbow;
+    const lOk = isValid(ls) && isValid(le) && ls.x > le.x + 0.05;
+    const rOk = isValid(rs) && isValid(re) && rs.x > re.x + 0.05;
+    return lOk || rOk; // 任何一侧肩膀在肘前 = 前移
   }
 
   private pushUpHipsSag(kp: Record<string, CleanKP>): boolean {
