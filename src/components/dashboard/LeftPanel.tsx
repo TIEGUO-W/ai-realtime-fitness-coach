@@ -280,16 +280,16 @@ export default function LeftPanel({
       {/* Coach Message Panel */}
       <div
         className={`flex-[0.28] m-3 mb-2 rounded-2xl border backdrop-blur-md p-4 flex flex-col justify-center ${
-          assistant.isAlert
+          isClient && assistant.isAlert
             ? 'border-red-700/50 bg-red-950/70 shadow-[0_0_25px_rgba(220,38,38,0.3)]'
             : 'border-cyber-cyan/20 bg-slate-900/60 shadow-[0_0_25px_rgba(0,229,255,0.08)]'
         }`}
       >
         <div className="flex items-center gap-2 mb-3">
-          <span className={`text-xs font-bold uppercase tracking-[0.15em] ${assistant.isAlert ? 'text-red-400' : 'text-cyber-cyan'}`}>
+          <span className={`text-xs font-bold uppercase tracking-[0.15em] ${isClient && assistant.isAlert ? 'text-red-400' : 'text-cyber-cyan'}`}>
             {'⚠'} AI 教练实时分析
           </span>
-          {assistant.isAlert && (
+          {isClient && assistant.isAlert && (
             <span className="animate-pulse text-[10px] font-mono text-red-400/80 tracking-wider">
               ● WARNING
             </span>
@@ -315,16 +315,16 @@ export default function LeftPanel({
               </div>
             ))
           ) : (
-            <p className={`text-base font-semibold leading-relaxed ${assistant.isAlert ? 'text-red-100' : 'text-white'}`}>
-              &ldquo;{assistant.message}&rdquo;
+            <p className={`text-base font-semibold leading-relaxed ${isClient && assistant.isAlert ? 'text-red-100' : 'text-white'}`}>
+              &ldquo;{isClient ? assistant.message : '准备好了吗？'}&rdquo;
             </p>
           )}
         </div>
 
         <div className="mt-2 flex items-center gap-4 text-[11px] text-slate-500 font-mono">
-          <span>心率 {biometrics.heartRate} BPM</span>
-          <span>分数 {workout.score}</span>
-          <span>动作 {workout.currentAction}</span>
+          <span>心率 {isClient ? biometrics.heartRate : '--'} BPM</span>
+          <span>分数 {isClient ? workout.score : 0}</span>
+          <span>动作 {isClient ? workout.currentAction : '--'}</span>
         </div>
       </div>
 

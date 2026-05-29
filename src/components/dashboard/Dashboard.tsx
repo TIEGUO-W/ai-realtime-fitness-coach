@@ -526,6 +526,9 @@ export default function Dashboard() {
   }, [isRunning, modelReady, quality, selectedExercise]);
 
   // ─── Voice interaction ────────────────────────────────
+  const restartingRef = useRef(false);
+  const networkErrorCountRef = useRef(0);
+
   useEffect(() => {
     if (!voiceEnabled) {
       // Stop listening
@@ -535,6 +538,8 @@ export default function Dashboard() {
       }
       setVoiceListening(false);
       voiceListeningRef.current = false;
+      restartingRef.current = false;
+      networkErrorCountRef.current = 0;
       return;
     }
 
@@ -559,6 +564,8 @@ export default function Dashboard() {
       console.log('[Voice] Recognition STARTED successfully');
       setVoiceListening(true);
       voiceListeningRef.current = true;
+      restartingRef.current = false;
+      networkErrorCountRef.current = 0;
     };
 
     recognition.onresult = (event: { resultIndex: number; results: { length: number; [key: number]: { [key: number]: { transcript: string }; isFinal: boolean } } }) => {
@@ -592,22 +599,39 @@ export default function Dashboard() {
         voiceListeningRef.current = false;
         return; // Don't restart
       }
-      // Auto-restart on other errors
-      if (voiceListeningRef.current) {
-        console.log('[Voice] Auto-restarting after error...');
+      // network error — 可能需要VPN（Google Speech API 在中国被墙）
+      if (event.error === 'network') {
+        networkErrorCountRef.current++;
+        if (networkErrorCountRef.current >= 5) {
+          console.error('[Voice] Too many network errors, stopping. Google Speech API may be blocked — try VPN.');
+          setVoiceListening(false);
+          voiceListeningRef.current = false;
+          return;
+        }
+        console.warn(`[Voice] Network error #${networkErrorCountRef.current}/5 — Google Speech API may need VPN`);
+      }
+      // Only schedule restart from onerror, NOT from onend (avoid double-restart)
+      if (voiceListeningRef.current && !restartingRef.current) {
+        restartingRef.current = true;
+        const delay = event.error === 'network' ? 2000 : 500;
         setTimeout(() => {
-          try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); }
-        }, 300);
+          if (voiceListeningRef.current && recognitionRef.current === recognition) {
+            try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); restartingRef.current = false; }
+          }
+        }, delay);
       }
     };
 
     recognition.onend = () => {
-      console.log('[Voice] Recognition ended, voiceListeningRef=', voiceListeningRef.current);
-      // Auto-restart if still enabled
-      if (voiceListeningRef.current) {
+      console.log('[Voice] Recognition ended, voiceListeningRef=', voiceListeningRef.current, 'restartingRef=', restartingRef.current);
+      // Only restart from onend if onerror didn't already schedule one
+      if (voiceListeningRef.current && !restartingRef.current) {
+        restartingRef.current = true;
         setTimeout(() => {
-          try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); }
-        }, 100);
+          if (voiceListeningRef.current && recognitionRef.current === recognition) {
+            try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); restartingRef.current = false; }
+          }
+        }, 200);
       }
     };
 
@@ -623,6 +647,8 @@ export default function Dashboard() {
       recognitionRef.current = null;
       setVoiceListening(false);
       voiceListeningRef.current = false;
+      restartingRef.current = false;
+      networkErrorCountRef.current = 0;
     };
   }, [voiceEnabled]);
 
