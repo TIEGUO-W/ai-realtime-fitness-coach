@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
+import { QRCodeSVG } from 'qrcode.react';
 import type { DashboardData, CoachPersonality, CoachVoice, ChatMessage } from '@/types/dashboard';
 import type { Application as SplineApp } from '@splinetool/runtime';
 
@@ -61,6 +62,7 @@ export default function LeftPanel({
   const isClient = useIsClient();
   const [activeModel, setActiveModel] = useState(0);
   const [splineLoading, setSplineLoading] = useState(true);
+  const [qrOpen, setQrOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const splineRef = useRef<SplineApp | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -204,6 +206,27 @@ export default function LeftPanel({
           </svg>
         </button>
 
+        {/* QR Code Button */}
+        <button
+          onClick={() => setQrOpen(!qrOpen)}
+          className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500 hover:text-slate-300 transition-colors mt-1"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
+          </svg>
+          扫码连接健康数据
+        </button>
+
+        {qrOpen && (
+          <div className="mt-3 flex flex-col items-center gap-2 animate-in slide-in-from-bottom-2 duration-200">
+            <div className="bg-white p-2 rounded-lg">
+              <QRCodeSVG value={typeof window !== 'undefined' ? window.location.href : ''} size={120} />
+            </div>
+            <p className="text-[9px] font-mono text-slate-500 text-center">用 iPhone 扫码添加到主屏幕</p>
+          </div>
+        )}
+
         {settingsOpen && (
           <div className="mt-3 space-y-3 animate-in slide-in-from-bottom-2 duration-200">
             {/* Personality */}
@@ -245,9 +268,48 @@ export default function LeftPanel({
                 ))}
               </div>
             </div>
+
+            {/* QR Code - 扫码在手机上打开 */}
+            <div className="mt-2 pt-2 border-t border-white/[0.04]">
+              <button
+                onClick={() => setQrOpen(true)}
+                className="w-full flex items-center gap-2 text-[10px] text-slate-400 hover:text-cyber-cyan transition-colors py-1"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
+                </svg>
+                <span>扫码手机训练</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {/* QR Code Modal */}
+      {qrOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setQrOpen(false)}>
+          <div className="bg-[#0C1018] border border-cyber-cyan/20 rounded-2xl p-6 flex flex-col items-center gap-4 shadow-[0_0_30px_rgba(0,229,255,0.1)]" onClick={(e) => e.stopPropagation()}>
+            <span className="text-sm font-bold text-white tracking-wider">手机扫码训练</span>
+            <div className="bg-white rounded-xl p-3">
+              <QRCodeSVG
+                value={typeof window !== 'undefined' ? window.location.href : ''}
+                size={180}
+                level="M"
+                fgColor="#05080F"
+                bgColor="#FFFFFF"
+              />
+            </div>
+            <span className="text-[10px] text-slate-400 text-center">用手机扫描二维码<br/>随时随地开始训练</span>
+            <button
+              onClick={() => setQrOpen(false)}
+              className="text-xs text-slate-400 hover:text-cyber-cyan transition-colors mt-1"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
