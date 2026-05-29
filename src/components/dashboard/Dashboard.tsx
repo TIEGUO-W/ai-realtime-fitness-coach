@@ -69,6 +69,7 @@ export default function Dashboard() {
   const [repCount, setRepCount] = useState(0);
   const [detectedExercise, setDetectedExercise] = useState('');
   const [realHeartRate, setRealHeartRate] = useState<number | null>(null);
+  const healthDataRef = useRef<any>(null);
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
   const [poseDetected, setPoseDetected] = useState(false);
   const [modelReady, setModelReady] = useState(false);
@@ -350,6 +351,22 @@ export default function Dashboard() {
   useEffect(() => {
     document.body.classList.add('home-dashboard');
     return () => { document.body.classList.remove('home-dashboard'); };
+  }, []);
+
+  // ─── Fetch health profile for AI plan modal ──────────────────
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const fetchHealth = async () => {
+      try {
+        const res = await fetch(`/api/health?sessionId=${encodeURIComponent(sid)}`);
+        const data = await res.json();
+        if (data.health) healthDataRef.current = data.health;
+      } catch { /* ignore */ }
+    };
+    fetchHealth();
+    const iv = setInterval(fetchHealth, 15000);
+    return () => clearInterval(iv);
   }, []);
 
   // ─── Connect WS ──────────────────────────────────────
@@ -825,6 +842,9 @@ export default function Dashboard() {
         open={planModalOpen}
         onClose={() => setPlanModalOpen(false)}
         personality={personality}
+        healthData={healthDataRef.current}
+        currentHR={realHeartRate ?? 0}
+        currentExercise={selectedExercise}
       />
       {snapshot && (
         <WorkoutSummaryModal

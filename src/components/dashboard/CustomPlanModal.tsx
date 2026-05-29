@@ -1,45 +1,79 @@
+'use client';
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { CoachPersonality } from '@/types/dashboard';
+import type { WatchHealthData } from '@/lib/health-store';
 import { PERSONALITY_LABELS, PERSONALITY_EMOJI } from '@/utils/coachVoice';
 
 interface CustomPlanModalProps {
   open: boolean;
   onClose: () => void;
   personality: CoachPersonality;
+  healthData: WatchHealthData | null;
+  currentHR: number;
+  currentExercise: string;
 }
 
 type Step = 'syncing' | 'metrics' | 'plan';
 
-// Simulated health metrics
-const MOCK_METRICS = {
-  sleepHours: 5.2,
-  sleepQuality: 'poor' as const,
-  restingHR: 62,
-  hrv: 34,
-  recoveryIndex: 45,
-  lastWorkout: '昨天 18:30 · 深蹲 4组',
-};
-
-const SLEEP_ADVICE: Record<string, string> = {
-  poor: '睡眠不足，恢复不充分',
-  fair: '睡眠尚可，基本恢复',
-  good: '睡眠充足，完全恢复',
-};
-
-export default function CustomPlanModal({ open, onClose, personality }: CustomPlanModalProps) {
+export default function CustomPlanModal({
+  open, onClose, personality, healthData, currentHR, currentExercise,
+}: CustomPlanModalProps) {
   const [step, setStep] = useState<Step>('syncing');
   const [syncProgress, setSyncProgress] = useState(0);
+  const [planText, setPlanText] = useState('');
+  const [planLoading, setPlanLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Extract real health data
+  const profile = healthData?.profile;
+  const age = profile?.age ?? 0;
+  const fitnessLevel = profile?.fitnessLevel ?? 'intermediate';
+  const goal = profile?.goal ?? 'general';
+  const hr = currentHR || healthData?.heartRate || 0;
+  const restingHR = healthData?.restingHeartRate || 0;
+  const sleepHours = healthData?.sleepHours || 0;
+  const sleepQuality = healthData?.sleepQuality || 'fair';
+
+  // Max HR calculation
+  const maxHR = age > 0 ? 220 - age : 0;
+  const hrPercent = maxHR > 0 && hr > 0 ? Math.round((hr / maxHR) * 100) : 0;
+
+  // Target HR zones based on goal
+  const targetZone = (() => {
+    if (age === 0) return { low: 0, high: 0, label: '未知' };
+    const base = 220 - age;
+    switch (goal) {
+      case 'lose_weight': return { low: Math.round(base * 0.6), high: Math.round(base * 0.7), label: '燃脂区 60-70%' };
+      case 'build_muscle': return { low: Math.round(base * 0.65), high: Math.round(base * 0.8), label: '增肌区 65-80%' };
+      case 'endurance': return { low: Math.round(base * 0.7), high: Math.round(base * 0.85), label: '耐力区 70-85%' };
+      default: return { low: Math.round(base * 0.6), high: Math.round(base * 0.75), label: '健康区 60-75%' };
+    }
+  })();
+
+  const SLEEP_MAP: Record<string, { color: string; emoji: string; text: string }> = {
+    poor: { color: 'border-orange-700/40 bg-orange-950/30', emoji: '😴', text: '睡眠不足' },
+    fair: { color: 'border-yellow-700/40 bg-yellow-950/30', emoji: '😐', text: '睡眠尚可' },
+    good: { color: 'border-green-700/40 bg-green-950/30', emoji: '😊', text: '睡眠充足' },
+  };
+
+  const GOAL_MAP: Record<string, string> = {
+    lose_weight: '减脂', build_muscle: '增肌', endurance: '耐力', general: '综合健身',
+  };
+  const LEVEL_MAP: Record<string, string> = {
+    beginner: '初学', intermediate: '进阶', advanced: '高级',
+  };
 
   // Reset and start flow when opened
   useEffect(() => {
     if (!open) {
       setStep('syncing');
       setSyncProgress(0);
+      setPlanText('');
+      setPlanLoading(false);
       return;
     }
 
-    // ── Step 1: Syncing animation ─────────────────────────────────
     const t1 = setInterval(() => {
       setSyncProgress((p) => {
         if (p >= 100) {
@@ -54,7 +88,7 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
       clearInterval(t1);
       setSyncProgress(100);
       setStep('metrics');
-    }, 2200);
+    }, 2000);
 
     return () => {
       clearInterval(t1);
@@ -62,12 +96,64 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
     };
   }, [open]);
 
-  // ── Step 2 → 3: Metrics then Plan ──────────────────────────────
+  // Step 2 → 3: After metrics display, fetch AI plan
   useEffect(() => {
     if (step !== 'metrics') return;
-    const t = setTimeout(() => setStep('plan'), 1800);
+    const t = setTimeout(() => {
+      setStep('plan');
+      fetchAIPlan();
+    }, 1500);
     return () => clearTimeout(t);
   }, [step]);
+
+  // Fetch AI-generated plan from backend
+  const fetchAIPlan = useCallback(async () => {
+    setPlanLoading(true);
+    try {
+      const res = await fetch('/api/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          age, fitnessLevel, goal, heartRate: hr,
+          restingHR, sleepHours, sleepQuality,
+          currentExercise, personality,
+        }),
+      });
+      const data = await res.json();
+      if (data.plan) {
+        setPlanText(data.plan);
+      } else {
+        setPlanText(generateFallbackPlan());
+      }
+    } catch {
+      setPlanText(generateFallbackPlan());
+    } finally {
+      setPlanLoading(false);
+    }
+  }, [age, fitnessLevel, goal, hr, restingHR, sleepHours, sleepQuality, currentExercise, personality]);
+
+  // Fallback plan if API fails
+  const generateFallbackPlan = useCallback(() => {
+    const goalText = GOAL_MAP[goal] || '综合健身';
+    const levelText = LEVEL_MAP[fitnessLevel] || '进阶';
+    const lines = [
+      `基于你的档案（${age}岁 · ${levelText} · ${goalText}），建议心率控制在 ${targetZone.low}-${targetZone.high} BPM（${targetZone.label}）。`,
+      '',
+      '📋 今日训练建议：',
+    ];
+    if (sleepQuality === 'poor' || (sleepHours > 0 && sleepHours < 6)) {
+      lines.push('1. 睡眠不足 → 先做 5 分钟动态拉伸热身');
+      lines.push('2. 降强度训练 → 组数减 30%，每组间歇多 15 秒');
+      lines.push('3. 心率上限 → 不超过 ' + Math.round(maxHR * 0.75) + ' BPM');
+    } else {
+      lines.push('1. 热身 3 分钟 → 全身关节活化');
+      lines.push('2. 主训练 → ' + (currentExercise || '深蹲') + ' 4组');
+      lines.push('3. 心率目标 → ' + targetZone.low + '-' + targetZone.high + ' BPM');
+    }
+    lines.push('4. 组间休息 45-60 秒 → 心率回落后再继续');
+    lines.push('5. 训练后拉伸 5 分钟 → 静态拉伸放松');
+    return lines.join('\n');
+  }, [age, fitnessLevel, goal, sleepQuality, sleepHours, maxHR, currentExercise, targetZone]);
 
   const handleClose = useCallback(() => {
     setStep('syncing');
@@ -76,6 +162,9 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
   }, [onClose]);
 
   if (!open) return null;
+
+  const hasProfile = !!profile;
+  const hasHR = hr > 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6" onClick={handleClose}>
@@ -87,39 +176,29 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900/90 backdrop-blur-xl shadow-2xl overflow-hidden animate-slide-up"
       >
-        {/* ── Header ──────────────────────────────────────────── */}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/40">
           <div className="flex items-center gap-2.5">
             <span className="text-lg">{step === 'syncing' ? '🔄' : step === 'metrics' ? '📊' : '⚡'}</span>
             <h2 className="text-sm font-semibold text-white tracking-wide">
-              {step === 'syncing'
-                ? '同步健康数据'
-                : step === 'metrics'
-                  ? '身体状态评估'
-                  : 'AI 定制今日计划'}
+              {step === 'syncing' ? '读取健康档案' : step === 'metrics' ? '身体状态评估' : 'AI 定制计划'}
             </h2>
           </div>
-          <button
-            onClick={handleClose}
-            className="text-slate-500 hover:text-white transition-colors text-lg leading-none"
-          >
+          <button onClick={handleClose} className="text-slate-500 hover:text-white transition-colors text-lg leading-none">
             ✕
           </button>
         </div>
 
-        {/* ── Body ────────────────────────────────────────────── */}
-        <div className="px-5 py-4 min-h-[280px]">
-          {/* ═══ STEP 1: Syncing ═══════════════════════════════ */}
+        {/* Body */}
+        <div className="px-5 py-4 min-h-[280px] max-h-[60vh] overflow-y-auto">
+          {/* ═══ STEP 1: Syncing ═══ */}
           {step === 'syncing' && (
             <div className="flex flex-col items-center justify-center py-6">
-              {/* Animated rings */}
               <div className="relative w-24 h-24 mb-6">
                 <div className="absolute inset-0 rounded-full border-2 border-slate-700/50" />
                 <div
                   className="absolute inset-0 rounded-full border-2 border-cyber-cyan/40 animate-spin"
-                  style={{
-                    clipPath: `inset(0 0 ${100 - syncProgress}% 0)`,
-                  }}
+                  style={{ clipPath: `inset(0 0 ${100 - syncProgress}% 0)` }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center">
                   <span className="text-2xl font-mono font-bold text-cyber-cyan tabular-nums">
@@ -129,27 +208,29 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
               </div>
 
               <p className="text-sm text-slate-300 font-mono tracking-wide mb-1">
-                正在读取健康数据
+                正在读取健康档案
               </p>
               <p className="text-[11px] text-slate-500 font-mono">
-                Syncing HealthKit & Watch Data...
+                {hasProfile ? 'Profile · Heart Rate · Training Data' : '尚未连接 Apple Health...'}
               </p>
 
-              {/* Pulsing data lines */}
               <div className="mt-5 w-full space-y-2">
-                {['心率变异性 (HRV)', '静息心率', '睡眠分析', '运动负荷', '恢复指数'].map((label, i) => (
+                {[
+                  { label: '健康档案', ok: hasProfile, val: hasProfile ? `${age}岁 · ${LEVEL_MAP[fitnessLevel]}` : '未填写' },
+                  { label: '实时心率', ok: hasHR, val: hasHR ? `${hr} BPM` : '未连接' },
+                  { label: '静息心率', ok: restingHR > 0, val: restingHR > 0 ? `${restingHR} BPM` : '无数据' },
+                  { label: '睡眠数据', ok: sleepHours > 0, val: sleepHours > 0 ? `${sleepHours} h` : '无数据' },
+                  { label: '训练目标', ok: hasProfile, val: hasProfile ? GOAL_MAP[goal] || goal : '未设置' },
+                ].map((item, i) => (
                   <div
-                    key={label}
+                    key={item.label}
                     className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30"
                     style={{ opacity: syncProgress > i * 18 ? 1 : 0.3, transition: 'opacity 0.3s' }}
                   >
-                    <span className="text-[11px] text-slate-400 font-mono">{label}</span>
+                    <span className="text-[11px] text-slate-400 font-mono">{item.label}</span>
                     {syncProgress > i * 18 + 10 ? (
-                      <span className="text-[11px] text-cyber-cyan font-mono tabular-nums">
-                        {label === '心率变异性 (HRV)' ? '34 ms' :
-                         label === '静息心率' ? '62 BPM' :
-                         label === '睡眠分析' ? '5.2 h' :
-                         label === '运动负荷' ? '中' : '45%'}
+                      <span className={`text-[11px] font-mono tabular-nums ${item.ok ? 'text-cyber-cyan' : 'text-slate-500'}`}>
+                        {item.val}
                       </span>
                     ) : (
                       <span className="inline-block w-12 h-3 rounded bg-slate-700/60 animate-pulse" />
@@ -160,64 +241,96 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
             </div>
           )}
 
-          {/* ═══ STEP 2: Metrics Review ═════════════════════════ */}
+          {/* ═══ STEP 2: Metrics Review ═══ */}
           {step === 'metrics' && (
             <div className="space-y-3 animate-slide-up">
               <p className="text-[11px] text-slate-500 font-mono mb-2">
-                数据同步完成 · 基于过去 48h 数据分析
+                {hasProfile ? `档案同步完成 · ${age}岁 · ${LEVEL_MAP[fitnessLevel]} · ${GOAL_MAP[goal]}` : '暂无健康档案 · 使用默认参数'}
               </p>
 
+              {/* Real-time HR card */}
+              <div className={`flex items-center justify-between p-3 rounded-xl border ${
+                hasHR
+                  ? hrPercent > 85 ? 'border-red-700/40 bg-red-950/25'
+                    : hrPercent > 70 ? 'border-orange-700/40 bg-orange-950/30'
+                    : 'border-cyber-cyan/20 bg-slate-800/40'
+                  : 'border-slate-700/30 bg-slate-800/30'
+              }`}>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-base">{hasHR ? '💓' : '💤'}</span>
+                  <div>
+                    <p className="text-xs text-slate-300 font-medium">
+                      {hasHR ? '实时心率' : '心率未连接'}
+                    </p>
+                    <p className="text-[10px] font-mono">
+                      {hasHR
+                        ? maxHR > 0
+                          ? `最大 ${maxHR} BPM · 当前 ${hrPercent}%`
+                          : '正在监测'
+                        : '连接 Apple Health 获取实时心率'}
+                    </p>
+                  </div>
+                </div>
+                {hasHR && (
+                  <span className={`text-lg font-bold font-mono tabular-nums ${
+                    hrPercent > 85 ? 'text-red-400' : hrPercent > 70 ? 'text-orange-400' : 'text-cyber-cyan'
+                  }`}>
+                    {hr}<span className="text-xs font-normal opacity-60"> BPM</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Target zone card */}
+              {age > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl border border-cyber-cyan/15 bg-cyber-cyan/5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">🎯</span>
+                    <div>
+                      <p className="text-xs text-slate-300 font-medium">目标心率区间</p>
+                      <p className="text-[10px] text-cyber-cyan/60 font-mono">{targetZone.label}</p>
+                    </div>
+                  </div>
+                  <span className="text-lg font-bold text-cyber-cyan font-mono tabular-nums">
+                    {targetZone.low}-{targetZone.high}<span className="text-xs font-normal text-cyber-cyan/60"> BPM</span>
+                  </span>
+                </div>
+              )}
+
               {/* Sleep card */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-orange-700/40 bg-orange-950/30">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-base">😴</span>
-                  <div>
-                    <p className="text-xs text-slate-300 font-medium">昨晚睡眠</p>
-                    <p className="text-[10px] text-orange-400/70 font-mono">{SLEEP_ADVICE.poor}</p>
+              {sleepHours > 0 && (
+                <div className={`flex items-center justify-between p-3 rounded-xl border ${SLEEP_MAP[sleepQuality]?.color || 'border-slate-700/30 bg-slate-800/30'}`}>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">{SLEEP_MAP[sleepQuality]?.emoji || '😴'}</span>
+                    <div>
+                      <p className="text-xs text-slate-300 font-medium">昨晚睡眠</p>
+                      <p className="text-[10px] text-slate-400 font-mono">{SLEEP_MAP[sleepQuality]?.text || ''}</p>
+                    </div>
                   </div>
+                  <span className="text-lg font-bold font-mono tabular-nums text-slate-200">
+                    {sleepHours}<span className="text-xs font-normal text-slate-400"> h</span>
+                  </span>
                 </div>
-                <span className="text-lg font-bold text-orange-400 font-mono tabular-nums">
-                  {MOCK_METRICS.sleepHours}<span className="text-xs font-normal text-orange-400/60"> h</span>
-                </span>
-              </div>
+              )}
 
-              {/* Resting HR card */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-cyber-cyan/20 bg-slate-800/40">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-base">💓</span>
-                  <div>
-                    <p className="text-xs text-slate-300 font-medium">静息心率</p>
-                    <p className="text-[10px] text-cyber-cyan/60 font-mono">正常范围</p>
+              {/* Resting HR */}
+              {restingHR > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-700/30 bg-slate-800/30">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">🫀</span>
+                    <div>
+                      <p className="text-xs text-slate-300 font-medium">静息心率</p>
+                      <p className="text-[10px] text-slate-500 font-mono">基础代谢指标</p>
+                    </div>
                   </div>
+                  <span className="text-lg font-bold text-slate-300 font-mono tabular-nums">
+                    {restingHR}<span className="text-xs font-normal text-slate-500"> BPM</span>
+                  </span>
                 </div>
-                <span className="text-lg font-bold text-cyber-cyan font-mono tabular-nums">
-                  {MOCK_METRICS.restingHR}<span className="text-xs font-normal text-cyber-cyan/60"> BPM</span>
-                </span>
-              </div>
-
-              {/* Recovery index card */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-red-700/30 bg-red-950/25">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-base">📉</span>
-                  <div>
-                    <p className="text-xs text-slate-300 font-medium">身体恢复指数</p>
-                    <p className="text-[10px] text-red-400/70 font-mono">低于正常 60% 阈值</p>
-                  </div>
-                </div>
-                <span className="text-lg font-bold text-red-400 font-mono tabular-nums">
-                  {MOCK_METRICS.recoveryIndex}<span className="text-xs font-normal text-red-400/60">%</span>
-                </span>
-              </div>
-
-              {/* Last workout */}
-              <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-800/30 border border-slate-700/30">
-                <span className="text-[10px] text-slate-500 font-mono">上次训练</span>
-                <span className="text-[11px] text-slate-400 font-mono">{MOCK_METRICS.lastWorkout}</span>
-              </div>
+              )}
             </div>
           )}
 
-          {/* ═══ STEP 3: AI Plan ════════════════════════════════ */}
+          {/* ═══ STEP 3: AI Plan ═══ */}
           {step === 'plan' && (
             <div className="animate-slide-up space-y-4">
               {/* Coach verdict */}
@@ -228,55 +341,60 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
                     {PERSONALITY_LABELS[personality]} · AI 评估结论
                   </span>
                 </div>
-                <p className="text-sm text-slate-200 leading-relaxed">
-                  检测到你昨晚睡眠仅 <span className="text-orange-400 font-semibold">{MOCK_METRICS.sleepHours} 小时</span>（低于 6h 警戒线），
-                  身体恢复指数仅 <span className="text-red-400 font-semibold">{MOCK_METRICS.recoveryIndex}%</span>。
-                  今日<span className="text-cyber-cyan font-semibold">不宜冲击极限</span>，以恢复性训练为主！
-                </p>
+                {planLoading ? (
+                  <div className="space-y-2">
+                    <div className="h-4 w-3/4 rounded bg-slate-700/40 animate-pulse" />
+                    <div className="h-4 w-1/2 rounded bg-slate-700/40 animate-pulse" />
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-200 leading-relaxed whitespace-pre-line">
+                    {planText}
+                  </div>
+                )}
               </div>
 
-              {/* Today's plan */}
-              <div>
-                <h4 className="text-xs font-semibold text-white tracking-wide mb-2.5 flex items-center gap-1.5">
-                  <span className="w-1 h-4 rounded-full bg-cyber-cyan inline-block" />
-                  今日运动清单
-                </h4>
-                <div className="space-y-2">
-                  {[
-                    { emoji: '🧘', title: '动态拉伸', desc: '全身关节活化 · 15 分钟', color: 'from-green-400/20 to-cyan-400/10 border-green-700/30' },
-                    { emoji: '🏋️', title: '低强度深蹲', desc: '3 组 × 15 次 · 自重 50% 配重', color: 'from-cyan-400/20 to-blue-500/10 border-cyber-cyan/30' },
-                    { emoji: '🚶', title: '有氧恢复', desc: '快走或骑行 · 心率 ≤ 130 BPM · 20 分钟', color: 'from-blue-400/20 to-purple-500/10 border-blue-700/30' },
-                    { emoji: '🧊', title: '筋膜放松', desc: '泡沫轴全身滚动 · 10 分钟', color: 'from-purple-400/20 to-pink-500/10 border-purple-700/30' },
-                  ].map((item) => (
-                    <div
-                      key={item.title}
-                      className={`flex items-center gap-3 p-3 rounded-xl border bg-gradient-to-r ${item.color} bg-slate-800/40`}
-                    >
-                      <span className="text-lg flex-shrink-0">{item.emoji}</span>
-                      <div className="min-w-0">
-                        <p className="text-xs text-slate-200 font-medium truncate">{item.title}</p>
-                        <p className="text-[10px] text-slate-400 font-mono truncate">{item.desc}</p>
+              {/* Quick HR zone reference */}
+              {age > 0 && (
+                <div>
+                  <h4 className="text-xs font-semibold text-white tracking-wide mb-2.5 flex items-center gap-1.5">
+                    <span className="w-1 h-4 rounded-full bg-flame-orange inline-block" />
+                    心率区间参考
+                  </h4>
+                  <div className="space-y-1.5">
+                    {[
+                      { label: '热身', range: `${Math.round(maxHR * 0.5)}-${Math.round(maxHR * 0.6)}`, color: 'bg-blue-500/20 border-blue-700/30', text: 'text-blue-400' },
+                      { label: '燃脂', range: `${Math.round(maxHR * 0.6)}-${Math.round(maxHR * 0.7)}`, color: 'bg-green-500/20 border-green-700/30', text: 'text-green-400' },
+                      { label: '有氧', range: `${Math.round(maxHR * 0.7)}-${Math.round(maxHR * 0.8)}`, color: 'bg-cyan-500/20 border-cyan-700/30', text: 'text-cyber-cyan' },
+                      { label: '无氧', range: `${Math.round(maxHR * 0.8)}-${Math.round(maxHR * 0.9)}`, color: 'bg-orange-500/20 border-orange-700/30', text: 'text-flame-orange' },
+                      { label: '极限', range: `${Math.round(maxHR * 0.9)}-${maxHR}`, color: 'bg-red-500/20 border-red-700/30', text: 'text-coral-red' },
+                    ].map((zone) => (
+                      <div
+                        key={zone.label}
+                        className={`flex items-center justify-between px-3 py-2 rounded-lg border ${zone.color}`}
+                      >
+                        <span className="text-[11px] text-slate-300 font-mono">{zone.label}</span>
+                        <span className={`text-[11px] font-mono tabular-nums font-bold ${zone.text}`}>{zone.range} BPM</span>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Disclaimer */}
               <p className="text-[10px] text-slate-600 font-mono text-center">
-                基于模拟数据分析 · 实际计划请咨询专业教练
+                {hasProfile ? '基于真实健康档案 + AI 分析' : '暂无健康档案 · 使用默认参数评估'}
               </p>
             </div>
           )}
         </div>
 
-        {/* ── Footer ────────────────────────────────────────────── */}
+        {/* Footer */}
         <div className="px-5 py-3 border-t border-slate-700/40 flex items-center justify-between">
           <span className="text-[10px] text-slate-600 font-mono">
             {step === 'syncing'
-              ? 'Apple HealthKit · WatchOS 11'
+              ? hasProfile ? 'Health Data · Real-time' : 'No Health Data Connected'
               : step === 'metrics'
-                ? '数据来源：模拟健康数据'
+                ? hasProfile ? `数据来源：Apple Health + 档案` : '使用默认参数评估'
                 : `🎯 ${PERSONALITY_LABELS[personality]} 生成`}
           </span>
           {step === 'plan' && (
@@ -289,7 +407,7 @@ export default function CustomPlanModal({ open, onClose, personality }: CustomPl
           )}
         </div>
 
-        {/* ── Top glow line ─────────────────────────────────────── */}
+        {/* Top glow line */}
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-cyber-cyan/50 to-transparent" />
       </div>
     </div>
