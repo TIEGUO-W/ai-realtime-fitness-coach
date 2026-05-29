@@ -410,7 +410,7 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
         <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">动作</span>
         <p className="mt-1.5 text-lg font-bold text-white truncate leading-tight">{workout.currentAction}</p>
         <div className="mt-1 h-0.5 rounded-full bg-slate-800 overflow-hidden">
-          <div className="h-full bg-cyber-cyan/40 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (workout.reps / Math.max(1, workout.targetReps)) * 100)}%` }} />
+          <div className="h-full bg-cyber-cyan/40 rounded-full transition-all duration-500" style={{ width: `${workout.targetReps > 0 ? Math.min(100, (workout.reps / workout.targetReps) * 100) : 0}%` }} />
         </div>
       </div>
 
@@ -452,7 +452,7 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
         </div>
         <div className="flex items-baseline gap-1.5 mt-1.5">
           <span className="text-2xl font-bold text-cyber-cyan font-mono tabular-nums leading-none">{workout.reps}</span>
-          <span className="text-[10px] text-slate-500 font-mono tabular-nums">/ {workout.targetReps}</span>
+          {workout.targetReps > 0 && <span className="text-[10px] text-slate-500 font-mono tabular-nums">/ {workout.targetReps}</span>}
         </div>
       </div>
 

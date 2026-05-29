@@ -14,7 +14,7 @@ export const mockData: DashboardData = {
   workout: {
     currentAction: initialAction,
     reps: 0,
-    targetReps: 20,
+    targetReps: 0,
     score: initialScore,
     isFormDeformed: false,
   },

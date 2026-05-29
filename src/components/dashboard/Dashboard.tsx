@@ -86,7 +86,7 @@ export default function Dashboard() {
   // Dashboard data derived from WS state
   const [data, setData] = useState<DashboardData>(() => ({
     ...mockData,
-    workout: { ...mockData.workout, currentAction: '深蹲', targetReps: 20 },
+    workout: { ...mockData.workout, currentAction: '深蹲', targetReps: 0 },
   }));
 
   // Speaking state for monster mouth animation
@@ -786,7 +786,7 @@ export default function Dashboard() {
     setIsRunning(true);
     setData(prev => ({
       ...prev,
-      workout: { ...prev.workout, reps: 0 },
+      workout: { ...prev.workout, reps: 0, currentAction: EXERCISE_LABELS[selectedExercise] || selectedExercise },
     }));
     wsRef.current?.send({
       type: 'set_session',
