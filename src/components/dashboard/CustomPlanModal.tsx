@@ -25,15 +25,12 @@ export default function CustomPlanModal({
   const [planLoading, setPlanLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Extract real health data
+  // Only real available data: profile (age, fitnessLevel, goal) + heartRate
   const profile = healthData?.profile;
   const age = profile?.age ?? 0;
   const fitnessLevel = profile?.fitnessLevel ?? 'intermediate';
   const goal = profile?.goal ?? 'general';
   const hr = currentHR || healthData?.heartRate || 0;
-  const restingHR = healthData?.restingHeartRate || 0;
-  const sleepHours = healthData?.sleepHours || 0;
-  const sleepQuality = healthData?.sleepQuality || 'fair';
 
   // Max HR calculation
   const maxHR = age > 0 ? 220 - age : 0;
@@ -50,12 +47,6 @@ export default function CustomPlanModal({
       default: return { low: Math.round(base * 0.6), high: Math.round(base * 0.75), label: '健康区 60-75%' };
     }
   })();
-
-  const SLEEP_MAP: Record<string, { color: string; emoji: string; text: string }> = {
-    poor: { color: 'border-orange-700/40 bg-orange-950/30', emoji: '😴', text: '睡眠不足' },
-    fair: { color: 'border-yellow-700/40 bg-yellow-950/30', emoji: '😐', text: '睡眠尚可' },
-    good: { color: 'border-green-700/40 bg-green-950/30', emoji: '😊', text: '睡眠充足' },
-  };
 
   const GOAL_MAP: Record<string, string> = {
     lose_weight: '减脂', build_muscle: '增肌', endurance: '耐力', general: '综合健身',
@@ -80,7 +71,7 @@ export default function CustomPlanModal({
           clearInterval(t1);
           return 100;
         }
-        return p + Math.random() * 18;
+        return p + Math.random() * 25;
       });
     }, 200);
 
@@ -88,7 +79,7 @@ export default function CustomPlanModal({
       clearInterval(t1);
       setSyncProgress(100);
       setStep('metrics');
-    }, 2000);
+    }, 1800);
 
     return () => {
       clearInterval(t1);
@@ -115,12 +106,13 @@ export default function CustomPlanModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           age, fitnessLevel, goal, heartRate: hr,
-          restingHR, sleepHours, sleepQuality,
           currentExercise, personality,
         }),
       });
       const data = await res.json();
-      if (data.plan) {
+      if (data.plan?.content) {
+        setPlanText(data.plan.content);
+      } else if (typeof data.plan === 'string') {
         setPlanText(data.plan);
       } else {
         setPlanText(generateFallbackPlan());
@@ -130,30 +122,27 @@ export default function CustomPlanModal({
     } finally {
       setPlanLoading(false);
     }
-  }, [age, fitnessLevel, goal, hr, restingHR, sleepHours, sleepQuality, currentExercise, personality]);
+  }, [age, fitnessLevel, goal, hr, currentExercise, personality]);
 
   // Fallback plan if API fails
   const generateFallbackPlan = useCallback(() => {
     const goalText = GOAL_MAP[goal] || '综合健身';
     const levelText = LEVEL_MAP[fitnessLevel] || '进阶';
     const lines = [
-      `基于你的档案（${age}岁 · ${levelText} · ${goalText}），建议心率控制在 ${targetZone.low}-${targetZone.high} BPM（${targetZone.label}）。`,
+      `基于你的档案（${age || '?'}岁 · ${levelText} · ${goalText}），建议心率控制在 ${targetZone.low || '?'}-${targetZone.high || '?'} BPM（${targetZone.label}）。`,
       '',
       '📋 今日训练建议：',
+      '1. 热身 3 分钟 → 全身关节活化',
+      '2. 主训练 → ' + (currentExercise || '深蹲') + ' 4组',
+      '3. 心率目标 → ' + (targetZone.low || '?') + '-' + (targetZone.high || '?') + ' BPM',
+      '4. 组间休息 45-60 秒 → 心率回落后再继续',
+      '5. 训练后拉伸 5 分钟 → 静态拉伸放松',
     ];
-    if (sleepQuality === 'poor' || (sleepHours > 0 && sleepHours < 6)) {
-      lines.push('1. 睡眠不足 → 先做 5 分钟动态拉伸热身');
-      lines.push('2. 降强度训练 → 组数减 30%，每组间歇多 15 秒');
-      lines.push('3. 心率上限 → 不超过 ' + Math.round(maxHR * 0.75) + ' BPM');
-    } else {
-      lines.push('1. 热身 3 分钟 → 全身关节活化');
-      lines.push('2. 主训练 → ' + (currentExercise || '深蹲') + ' 4组');
-      lines.push('3. 心率目标 → ' + targetZone.low + '-' + targetZone.high + ' BPM');
+    if (hr <= 0) {
+      lines.push('', '⚠️ 心率未连接，建议连接 Apple Health 获取实时监测');
     }
-    lines.push('4. 组间休息 45-60 秒 → 心率回落后再继续');
-    lines.push('5. 训练后拉伸 5 分钟 → 静态拉伸放松');
     return lines.join('\n');
-  }, [age, fitnessLevel, goal, sleepQuality, sleepHours, maxHR, currentExercise, targetZone]);
+  }, [age, fitnessLevel, goal, hr, currentExercise, targetZone]);
 
   const handleClose = useCallback(() => {
     setStep('syncing');
@@ -211,24 +200,22 @@ export default function CustomPlanModal({
                 正在读取健康档案
               </p>
               <p className="text-[11px] text-slate-500 font-mono">
-                {hasProfile ? 'Profile · Heart Rate · Training Data' : '尚未连接 Apple Health...'}
+                {hasProfile ? 'Profile · Heart Rate' : '尚未连接 Apple Health...'}
               </p>
 
               <div className="mt-5 w-full space-y-2">
                 {[
                   { label: '健康档案', ok: hasProfile, val: hasProfile ? `${age}岁 · ${LEVEL_MAP[fitnessLevel]}` : '未填写' },
                   { label: '实时心率', ok: hasHR, val: hasHR ? `${hr} BPM` : '未连接' },
-                  { label: '静息心率', ok: restingHR > 0, val: restingHR > 0 ? `${restingHR} BPM` : '无数据' },
-                  { label: '睡眠数据', ok: sleepHours > 0, val: sleepHours > 0 ? `${sleepHours} h` : '无数据' },
                   { label: '训练目标', ok: hasProfile, val: hasProfile ? GOAL_MAP[goal] || goal : '未设置' },
                 ].map((item, i) => (
                   <div
                     key={item.label}
                     className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30"
-                    style={{ opacity: syncProgress > i * 18 ? 1 : 0.3, transition: 'opacity 0.3s' }}
+                    style={{ opacity: syncProgress > i * 25 ? 1 : 0.3, transition: 'opacity 0.3s' }}
                   >
                     <span className="text-[11px] text-slate-400 font-mono">{item.label}</span>
-                    {syncProgress > i * 18 + 10 ? (
+                    {syncProgress > i * 25 + 10 ? (
                       <span className={`text-[11px] font-mono tabular-nums ${item.ok ? 'text-cyber-cyan' : 'text-slate-500'}`}>
                         {item.val}
                       </span>
@@ -296,35 +283,14 @@ export default function CustomPlanModal({
                 </div>
               )}
 
-              {/* Sleep card */}
-              {sleepHours > 0 && (
-                <div className={`flex items-center justify-between p-3 rounded-xl border ${SLEEP_MAP[sleepQuality]?.color || 'border-slate-700/30 bg-slate-800/30'}`}>
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-base">{SLEEP_MAP[sleepQuality]?.emoji || '😴'}</span>
-                    <div>
-                      <p className="text-xs text-slate-300 font-medium">昨晚睡眠</p>
-                      <p className="text-[10px] text-slate-400 font-mono">{SLEEP_MAP[sleepQuality]?.text || ''}</p>
-                    </div>
+              {/* No profile warning */}
+              {!hasProfile && (
+                <div className="flex items-center gap-2 p-3 rounded-xl border border-orange-700/30 bg-orange-950/20">
+                  <span className="text-base">⚠️</span>
+                  <div>
+                    <p className="text-xs text-orange-300 font-medium">尚未填写健康档案</p>
+                    <p className="text-[10px] text-orange-400/60 font-mono">扫码填写可获得更精准的训练建议</p>
                   </div>
-                  <span className="text-lg font-bold font-mono tabular-nums text-slate-200">
-                    {sleepHours}<span className="text-xs font-normal text-slate-400"> h</span>
-                  </span>
-                </div>
-              )}
-
-              {/* Resting HR */}
-              {restingHR > 0 && (
-                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-700/30 bg-slate-800/30">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-base">🫀</span>
-                    <div>
-                      <p className="text-xs text-slate-300 font-medium">静息心率</p>
-                      <p className="text-[10px] text-slate-500 font-mono">基础代谢指标</p>
-                    </div>
-                  </div>
-                  <span className="text-lg font-bold text-slate-300 font-mono tabular-nums">
-                    {restingHR}<span className="text-xs font-normal text-slate-500"> BPM</span>
-                  </span>
                 </div>
               )}
             </div>
@@ -394,7 +360,7 @@ export default function CustomPlanModal({
             {step === 'syncing'
               ? hasProfile ? 'Health Data · Real-time' : 'No Health Data Connected'
               : step === 'metrics'
-                ? hasProfile ? `数据来源：Apple Health + 档案` : '使用默认参数评估'
+                ? hasProfile ? '数据来源：Apple Health + 档案' : '使用默认参数评估'
                 : `🎯 ${PERSONALITY_LABELS[personality]} 生成`}
           </span>
           {step === 'plan' && (
