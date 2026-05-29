@@ -45,8 +45,8 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG: SessionConfig = {
   llmTimeoutMs: 2500,
-  speechCooldownMs: 1500,
-  idleThresholdMs: 8000,
+  speechCooldownMs: 800,       // 说话冷却 800ms（原来1.5s太长）
+  idleThresholdMs: 5000,        // 5秒不动就算空闲（原来8s）
   deepCoachIntervalMs: 30_000,
   maxHistoryLength: 20,
 };
@@ -233,7 +233,7 @@ export class CoachSession {
               tips: [text], encouragement: text,
             },
           });
-          this.ttsQueue.enqueue(text, 'low');
+          this.ttsQueue.enqueue(text, 'medium');
         }
       } else {
         // 没有骨架数据但连接着 — 主动邀请
@@ -340,16 +340,16 @@ export class CoachSession {
       const idle = Date.now() - this.lastActivityTime;
       const timeSinceLastSpeech = Date.now() - this.lastSpeechTime;
 
-      if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 8000) {
+      if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 5000) {
         console.log(`[CoachSession] idle timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('idle');
       }
 
-      if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 10000) {
+      if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 6000) {
         console.log(`[CoachSession] periodic timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('periodic');
       }
-    }, 3000);
+    }, 2000);
   }
 
   // ═══ 决策引擎 ═══════════════════════════════
@@ -420,13 +420,13 @@ export class CoachSession {
       }
     }
 
-    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（4秒+）
-    if (this.recentQualityScores.length >= 3 && now - this.lastSpeechTime > 4000) {
+    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（2.5秒+）
+    if (this.recentQualityScores.length >= 2 && now - this.lastSpeechTime > 2500) {
       const q = result.quality.qualityScore >= 85 ? 'good' as const
         : result.quality.qualityScore >= 60 ? 'adjust' as const
         : 'warning' as const;
       const fb = generateQuickCoaching(result.exercise, result.stage, q, result.repCount);
-      return { should: true, urgency: 'low', trigger: 'pose_periodic', useLLM: false, fallbackText: fb.text };
+      return { should: true, urgency: 'medium', trigger: 'pose_periodic', useLLM: false, fallbackText: fb.text };
     }
 
     return no;

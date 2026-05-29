@@ -17,7 +17,7 @@ export class TTSQueue {
 
   constructor(opts?: { maxSize?: number; dedupWindowMs?: number }) {
     this.maxSize = opts?.maxSize ?? 5;
-    this.dedupWindowMs = opts?.dedupWindowMs ?? 5_000;
+    this.dedupWindowMs = opts?.dedupWindowMs ?? 3_000;
   }
 
   setHandler(fn: (text: string, priority: TtsPriority) => Promise<void>): void {
