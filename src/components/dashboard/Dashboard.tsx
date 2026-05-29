@@ -527,7 +527,7 @@ export default function Dashboard() {
 
   // ─── Voice interaction ────────────────────────────────
   useEffect(() => {
-    if (!voiceEnabled || !isRunning) {
+    if (!voiceEnabled) {
       // Stop listening
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -542,15 +542,24 @@ export default function Dashboard() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn('[Voice] Web Speech API not supported');
+      console.error('[Voice] Web Speech API NOT supported in this browser!');
+      alert('当前浏览器不支持语音识别，请使用 Chrome 浏览器');
       return;
     }
 
+    console.log('[Voice] Initializing SpeechRecognition, lang=zh-CN, continuous=true');
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = 'zh-CN';
+    recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
+
+    recognition.onstart = () => {
+      console.log('[Voice] Recognition STARTED successfully');
+      setVoiceListening(true);
+      voiceListeningRef.current = true;
+    };
 
     recognition.onresult = (event: { resultIndex: number; results: { length: number; [key: number]: { [key: number]: { transcript: string }; isFinal: boolean } } }) => {
       const last = event.results[event.results.length - 1];
@@ -574,24 +583,37 @@ export default function Dashboard() {
       }
     };
 
-    recognition.onerror = () => {
-      // Auto-restart on error
+    recognition.onerror = (event: any) => {
+      console.error('[Voice] Recognition error:', event.error, event.message);
+      // not-allowed = 麦克风权限被拒
+      if (event.error === 'not-allowed') {
+        console.error('[Voice] Microphone permission DENIED');
+        setVoiceListening(false);
+        voiceListeningRef.current = false;
+        return; // Don't restart
+      }
+      // Auto-restart on other errors
       if (voiceListeningRef.current) {
-        try { recognition.start(); } catch { /* ignore */ }
+        console.log('[Voice] Auto-restarting after error...');
+        setTimeout(() => {
+          try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); }
+        }, 300);
       }
     };
 
     recognition.onend = () => {
+      console.log('[Voice] Recognition ended, voiceListeningRef=', voiceListeningRef.current);
       // Auto-restart if still enabled
       if (voiceListeningRef.current) {
-        try { recognition.start(); } catch { /* ignore */ }
+        setTimeout(() => {
+          try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); }
+        }, 100);
       }
     };
 
     try {
+      console.log('[Voice] Calling recognition.start()...');
       recognition.start();
-      setVoiceListening(true);
-      voiceListeningRef.current = true;
     } catch (e) {
       console.error('[Voice] Start failed:', e);
     }
@@ -602,7 +624,7 @@ export default function Dashboard() {
       setVoiceListening(false);
       voiceListeningRef.current = false;
     };
-  }, [voiceEnabled, isRunning]);
+  }, [voiceEnabled]);
 
   // ─── Simulated heart rate (until real HR available) ───
   useEffect(() => {
