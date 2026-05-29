@@ -157,6 +157,46 @@ export default function Dashboard() {
       console.log('[TTS] audio.play() started');
     } catch (err) {
       console.error('[TTS] playNextInQueue error:', err);
+      // Mobile autoplay policy: if play() was denied, try unlocking and retry once
+      if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+        console.log('[TTS] Autoplay blocked, attempting unlock...');
+        unlockMobileAudio();
+        // Retry after a short delay
+        const retryUrl = next.url;
+        setTimeout(async () => {
+          try {
+            const resp2 = await fetch(retryUrl);
+            const blob2 = await resp2.blob();
+            const blobUrl2 = URL.createObjectURL(blob2);
+            const audio2 = new Audio(blobUrl2);
+            currentAudioRef.current = audio2;
+            isPlayingRef.current = true;
+            setIsSpeaking(true);
+            audio2.onended = () => {
+              URL.revokeObjectURL(blobUrl2);
+              currentAudioRef.current = null;
+              isPlayingRef.current = false;
+              setIsSpeaking(false);
+              playNextInQueue();
+            };
+            audio2.onerror = () => {
+              URL.revokeObjectURL(blobUrl2);
+              currentAudioRef.current = null;
+              isPlayingRef.current = false;
+              setIsSpeaking(false);
+              playNextInQueue();
+            };
+            await audio2.play();
+            console.log('[TTS] Retry audio.play() succeeded');
+          } catch {
+            currentAudioRef.current = null;
+            isPlayingRef.current = false;
+            setIsSpeaking(false);
+            playNextInQueue();
+          }
+        }, 500);
+        return;
+      }
       currentAudioRef.current = null;
       isPlayingRef.current = false;
       setIsSpeaking(false);
@@ -674,7 +714,27 @@ export default function Dashboard() {
   }, [data.workout.reps, data.workout.targetReps, data]);
 
   // ─── Handlers ────────────────────────────────────────
+  // ─── Mobile Audio Unlock ──────────────────────────────
+  // Mobile browsers require a user gesture before audio can play.
+  // We unlock on the first tap by playing a silent buffer.
+  const audioUnlockedRef = useRef(false);
+  const unlockMobileAudio = useCallback(() => {
+    if (audioUnlockedRef.current) return;
+    try {
+      const ctx = new AudioContext();
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+      ctx.close();
+      audioUnlockedRef.current = true;
+      console.log('[Audio] Mobile audio unlocked');
+    } catch { /* ignore */ }
+  }, []);
+
   const handleStartWorkout = useCallback(() => {
+    unlockMobileAudio();
     sessionIdRef.current = `session_${Date.now()}`;
     startTimeRef.current = Date.now();
     completedRef.current = false;

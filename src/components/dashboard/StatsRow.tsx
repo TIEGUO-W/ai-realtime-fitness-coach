@@ -304,6 +304,7 @@ function createMusicPlayer() {
   function start() {
     if (playing) return;
     ctx = new AudioContext();
+    if (ctx.state === 'suspended') { ctx.resume(); }
     masterGain = ctx.createGain();
     masterGain.gain.value = TRACK_CONFIG[trackId].vol;
     masterGain.connect(ctx.destination);
