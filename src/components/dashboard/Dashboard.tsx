@@ -68,6 +68,7 @@ export default function Dashboard() {
   const [wsConnected, setWsConnected] = useState(false);
   const [repCount, setRepCount] = useState(0);
   const [detectedExercise, setDetectedExercise] = useState('');
+  const [realHeartRate, setRealHeartRate] = useState<number | null>(null);
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
   const [poseDetected, setPoseDetected] = useState(false);
   const [modelReady, setModelReady] = useState(false);
@@ -331,6 +332,14 @@ export default function Dashboard() {
         const p = msg.payload as any;
         if (p.audioUrl) {
           enqueueAudio(p.audioUrl, 'high'); // voice replies are always high priority
+        }
+        break;
+      }
+      case 'heart_rate_update': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hrPayload = msg.payload as any;
+        if (hrPayload.heartRate) {
+          setRealHeartRate(hrPayload.heartRate);
         }
         break;
       }
@@ -776,7 +785,7 @@ export default function Dashboard() {
       {/* LEFT: AI Coach Panel */}
       <div className="w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.03]">
         <LeftPanel
-          data={data}
+          data={{ ...data, biometrics: { ...data.biometrics, heartRate: realHeartRate ?? data.biometrics.heartRate } }}
           personality={personality}
           voice={voice}
           onPersonalityChange={setPersonality}
@@ -791,7 +800,7 @@ export default function Dashboard() {
       <div className="flex-1 flex flex-col min-w-0">
         <RightPanel
           workout={data.workout}
-          biometrics={data.biometrics}
+          biometrics={{ ...data.biometrics, heartRate: realHeartRate ?? data.biometrics.heartRate }}
           environment={environment}
           connectionError={loadError || undefined}
           onOpenPlanModal={() => setPlanModalOpen(true)}

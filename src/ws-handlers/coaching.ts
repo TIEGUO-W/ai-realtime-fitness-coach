@@ -13,6 +13,7 @@ import { PoseAlgorithmEngine } from './pose-algorithm';
 import { CoachSession } from './coach-session';
 import { parseVoiceCommand } from './voice-command';
 import { ASRClient, Config } from 'coze-coding-dev-sdk';
+import { onHeartRate } from '../lib/health-store';
 
 const ALGORITHM_INTERVAL_MS = 100; // 算法推送 ~10fps
 
@@ -46,6 +47,14 @@ export function handleCoachingConnection(ws: WebSocket): void {
   const session = new CoachSession(ws);
   let currentExercise = 'squat';
   let lastAlgorithmPush = 0;
+
+  // Listen for Apple Health heart rate updates
+  const hrHandler = (data: { sessionId: string; heartRate: number }) => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'heart_rate_update', payload: { heartRate: data.heartRate } }));
+    }
+  };
+  const unsubHeartRate = onHeartRate(hrHandler);
 
   ws.on('message', async (raw: Buffer) => {
     let msg: WsMessage;
@@ -185,6 +194,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
   ws.on('close', () => {
     algorithm.reset();
     session.destroy();
+    unsubHeartRate();
   });
 }
 

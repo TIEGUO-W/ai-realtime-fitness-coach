@@ -8,6 +8,8 @@
  * key=sess_xxx → WatchHealthData
  */
 
+import { EventEmitter } from 'events';
+
 export interface HealthProfile {
   age: number;
   fitnessLevel: 'beginner' | 'intermediate' | 'advanced';
@@ -29,6 +31,7 @@ export interface WatchHealthData {
 }
 
 const store = new Map<string, WatchHealthData>();
+const emitter = new EventEmitter();
 
 function key(sessionId: string): string {
   return `sess_${sessionId}`;
@@ -51,11 +54,23 @@ export function upsertHealth(
     lastUpdated: Date.now(),
   };
   store.set(k, merged);
+
+  // 通知心率变化
+  if (data.heartRate !== undefined) {
+    emitter.emit('heartRate', { sessionId, heartRate: data.heartRate });
+  }
+
   return merged;
 }
 
 export function updateProfile(sessionId: string, profile: HealthProfile): WatchHealthData {
   return upsertHealth(sessionId, { profile });
+}
+
+/** 监听心率更新 */
+export function onHeartRate(listener: (data: { sessionId: string; heartRate: number }) => void): () => void {
+  emitter.on('heartRate', listener);
+  return () => { emitter.off('heartRate', listener); };
 }
 
 /** 计算最大心率 (220-年龄) */

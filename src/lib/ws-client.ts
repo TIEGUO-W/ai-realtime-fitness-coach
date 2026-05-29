@@ -66,6 +66,13 @@ export interface TTSReadyPayload {
   priority?: 'high' | 'medium' | 'low';
 }
 
+// Apple Health 心率推送
+export interface HeartRatePayload {
+  heartRate: number;
+  source: 'apple_health';
+  timestamp: number;
+}
+
 // ─── WebSocket 客户端工具 ───────────────────────
 
 interface WsOptions {
