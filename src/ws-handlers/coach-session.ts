@@ -45,7 +45,7 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG: SessionConfig = {
   llmTimeoutMs: 2500,
-  speechCooldownMs: 800,       // 说话冷却 800ms（原来1.5s太长）
+  speechCooldownMs: 3000,       // 说话冷却 3s（TTS需要时间播放，不能太密集）
   idleThresholdMs: 5000,        // 5秒不动就算空闲（原来8s）
   deepCoachIntervalMs: 30_000,
   maxHistoryLength: 20,
@@ -340,12 +340,12 @@ export class CoachSession {
       const idle = Date.now() - this.lastActivityTime;
       const timeSinceLastSpeech = Date.now() - this.lastSpeechTime;
 
-      if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 5000) {
+      if (idle > this.config.idleThresholdMs && timeSinceLastSpeech > 8000) {
         console.log(`[CoachSession] idle timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('idle');
       }
 
-      if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 6000) {
+      if (idle < this.config.idleThresholdMs && timeSinceLastSpeech > 10000) {
         console.log(`[CoachSession] periodic timer fired: idle=${Math.round(idle/1000)}s sinceSpeech=${Math.round(timeSinceLastSpeech/1000)}s`);
         this.onTimer('periodic');
       }
@@ -407,9 +407,9 @@ export class CoachSession {
 
     // 5. 完成一次 → 高概率鼓励（确保几乎每次都有反馈）
     if (result.completedRep) {
-      const speakChance = result.repCount <= 3 ? 1.0   // 前3次必说
-        : result.repCount <= 10 ? 0.9                    // 4-10次 90%
-        : 0.7;                                           // 10次以上 70%
+      const speakChance = result.repCount <= 3 ? 0.8   // 前3次 80%
+        : result.repCount <= 10 ? 0.5                    // 4-10次 50%
+        : 0.3;                                           // 10次以上 30%
       if (Math.random() < speakChance) {
         const q = result.quality.qualityScore >= 90 ? 'perfect' as const
           : result.quality.qualityScore >= 75 ? 'good' as const
@@ -420,8 +420,8 @@ export class CoachSession {
       }
     }
 
-    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（2.5秒+）
-    if (this.recentQualityScores.length >= 2 && now - this.lastSpeechTime > 2500) {
+    // 6. 周期性鼓励 — 用户在做动作但教练长时间没说话（8秒+）
+    if (this.recentQualityScores.length >= 2 && now - this.lastSpeechTime > 8000) {
       const q = result.quality.qualityScore >= 85 ? 'good' as const
         : result.quality.qualityScore >= 60 ? 'adjust' as const
         : 'warning' as const;
