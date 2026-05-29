@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 
 type FitnessLevel = 'beginner' | 'intermediate' | 'advanced';
@@ -13,8 +12,6 @@ type Goal = 'lose_weight' | 'build_muscle' | 'endurance' | 'general';
 interface HealthState {
   profile?: { age: number; fitnessLevel: string; goal: string };
   heartRate?: number;
-  sleepQuality?: string;
-  sleepHours?: number;
   lastUpdated?: number;
 }
 
@@ -38,7 +35,7 @@ export default function HealthPage() {
   const [fitnessLevel, setFitness] = useState<FitnessLevel>('intermediate');
   const [goal, setGoal] = useState<Goal>('general');
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'url' | 'link' | null>(null);
 
   useEffect(() => {
     const existing = localStorage.getItem('health_session_id');
@@ -80,7 +77,6 @@ export default function HealthPage() {
   };
 
   const handleDisconnect = async () => {
-    // Clear session, generate new one
     const newSid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     localStorage.setItem('health_session_id', newSid);
     setSessionId(newSid);
@@ -92,25 +88,13 @@ export default function HealthPage() {
   };
 
   const apiUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/health?sessionId=${encodeURIComponent(sessionId)}` : '';
+  const coachLink = typeof window !== 'undefined' ? `${window.location.origin}/?session=${encodeURIComponent(sessionId)}` : '';
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(apiUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = (text: string, key: 'url' | 'link') => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
   };
-
-  const levelOptions: { value: FitnessLevel; label: string }[] = [
-    { value: 'beginner', label: '新手' },
-    { value: 'intermediate', label: '进阶' },
-    { value: 'advanced', label: '大佬' },
-  ];
-
-  const goalOptions: { value: Goal; label: string }[] = [
-    { value: 'lose_weight', label: '减脂' },
-    { value: 'build_muscle', label: '增肌' },
-    { value: 'endurance', label: '耐力' },
-    { value: 'general', label: '健康' },
-  ];
 
   const hasHeartRate = !!health?.heartRate;
   const [now, setNow] = useState(0);
@@ -123,7 +107,7 @@ export default function HealthPage() {
 
   return (
     <div className="min-h-screen bg-[#05080F] text-[#F0F1F5] p-4 flex flex-col items-center">
-      <div className="w-full max-w-md space-y-4 pt-6">
+      <div className="w-full max-w-md space-y-4 pt-6 pb-10">
         {/* Header */}
         <div className="text-center">
           <h1 className="text-lg font-bold tracking-tight">AI 运动教练</h1>
@@ -196,7 +180,11 @@ export default function HealthPage() {
             <div>
               <label className="text-xs text-[#6B7280] mb-1.5 block">运动水平</label>
               <div className="grid grid-cols-3 gap-2">
-                {levelOptions.map((opt) => (
+                {([
+                  { value: 'beginner' as FitnessLevel, label: '新手' },
+                  { value: 'intermediate' as FitnessLevel, label: '进阶' },
+                  { value: 'advanced' as FitnessLevel, label: '大佬' },
+                ]).map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setFitness(opt.value)}
@@ -216,7 +204,12 @@ export default function HealthPage() {
             <div>
               <label className="text-xs text-[#6B7280] mb-1.5 block">训练目标</label>
               <div className="grid grid-cols-4 gap-2">
-                {goalOptions.map((opt) => (
+                {([
+                  { value: 'lose_weight' as Goal, label: '减脂' },
+                  { value: 'build_muscle' as Goal, label: '增肌' },
+                  { value: 'endurance' as Goal, label: '耐力' },
+                  { value: 'general' as Goal, label: '健康' },
+                ]).map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setGoal(opt.value)}
@@ -253,14 +246,14 @@ export default function HealthPage() {
                 <Input
                   readOnly
                   value={apiUrl}
-                  className="bg-[#0A0C12] border-[rgba(0,229,255,0.1)] text-[#00E5FF] text-xs font-mono"
+                  className="bg-[#0A0C12] border-[rgba(0,229,255,0.1)] text-[#00E5FF] text-xs font-mono truncate"
                 />
                 <Button
-                  onClick={handleCopy}
+                  onClick={() => handleCopy(apiUrl, 'url')}
                   variant="outline"
                   className="border-[rgba(0,229,255,0.2)] text-[#00E5FF] hover:bg-[rgba(0,229,255,0.1)] shrink-0 text-xs px-3"
                 >
-                  {copied ? '✓' : '复制'}
+                  {copied === 'url' ? '✓' : '复制'}
                 </Button>
               </div>
             </div>
@@ -283,11 +276,35 @@ export default function HealthPage() {
                 <li>点击上方按钮安装快捷指令</li>
                 <li>打开快捷指令，将复制的 URL 粘贴到 URL 输入框</li>
                 <li>运行快捷指令，心率会每 2 秒自动上传</li>
-                <li>回到教练页面，心率数据实时显示</li>
+                <li>在电脑上打开下方教练链接，心率实时同步</li>
               </ol>
             </div>
           </CardContent>
         </Card>
+
+        {/* Coach Link - share to computer */}
+        {saved && (
+          <Card className="border-[rgba(0,229,255,0.15)] bg-[#0C1018]">
+            <CardContent className="p-4 space-y-3">
+              <h2 className="text-sm font-semibold text-[#00E5FF] uppercase tracking-widest">教练页面链接</h2>
+              <p className="text-xs text-[#6B7280]">在电脑浏览器打开此链接，心率数据会自动同步到教练面板</p>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={coachLink}
+                  className="bg-[#0A0C12] border-[rgba(0,229,255,0.1)] text-[#00E5FF] text-xs font-mono truncate"
+                />
+                <Button
+                  onClick={() => handleCopy(coachLink, 'link')}
+                  variant="outline"
+                  className="border-[rgba(0,229,255,0.2)] text-[#00E5FF] hover:bg-[rgba(0,229,255,0.1)] shrink-0 text-xs px-3"
+                >
+                  {copied === 'link' ? '✓' : '复制'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Disconnect / Reset */}
         <Card className="border-[rgba(255,71,87,0.08)] bg-[#0C1018]">
