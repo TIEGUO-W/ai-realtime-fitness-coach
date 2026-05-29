@@ -11,9 +11,11 @@ const useIsClient = () => useSyncExternalStore(emptySubscribe, () => true, () =>
 
 /* ─── Monster Models ─── */
 const MONSTERS = [
-  { name: 'Flame', splineUrl: 'https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode' },
-  { name: 'Aqua', splineUrl: 'https://prod.spline.design/YxVlKTICvsE5rO3P/scene.splinecode' },
-  { name: 'Shadow', splineUrl: 'https://prod.spline.design/4tX2NbBfymmMEP6R/scene.splinecode' },
+  { name: '怪兽橙', splineUrl: 'https://prod.spline.design/nrJ0KxfhMwCC5Ggi/scene.splinecode' },
+  { name: '怪兽蓝', splineUrl: 'https://prod.spline.design/DxK6VB8BA22ezp4s/scene.splinecode' },
+  { name: '怪兽绿', splineUrl: 'https://prod.spline.design/4jabPUqZm8qC6udL/scene.splinecode' },
+  { name: '怪兽紫', splineUrl: 'https://prod.spline.design/Iksy7KOHGBhVvP9L/scene.splinecode' },
+  { name: '粉红怪兽', splineUrl: 'https://prod.spline.design/kJnye6hI-JHR2jjJ/scene.splinecode' },
 ];
 
 const PERSONALITY_CONFIG: Record<CoachPersonality, { label: string; emoji: string; color: string }> = {
