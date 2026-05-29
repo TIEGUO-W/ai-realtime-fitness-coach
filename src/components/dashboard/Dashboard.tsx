@@ -77,9 +77,6 @@ export default function Dashboard() {
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceMessages, setVoiceMessages] = useState<{ from: 'user' | 'coach'; text: string }[]>([]);
   const voiceListeningRef = useRef(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const frameBufferRef = useRef<Landmark[][]>([]);
   const pendingVoiceRef = useRef<string[]>([]);
   const lastFrameSentRef = useRef<number>(0);
@@ -525,130 +522,92 @@ export default function Dashboard() {
     return () => cancelAnimationFrame(rafId);
   }, [isRunning, modelReady, quality, selectedExercise]);
 
-  // ─── Voice interaction ────────────────────────────────
-  const restartingRef = useRef(false);
-  const networkErrorCountRef = useRef(0);
+  // ─── Voice interaction (MediaRecorder + Backend ASR) ─────
+  // 使用 MediaRecorder 录音 → WS 发 base64 → 后端 ASRClient 识别
+  // 不再依赖 Web Speech API（Google 被墙），国内直连可用
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!voiceEnabled) {
-      // Stop listening
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch { /* ignore */ }
-        recognitionRef.current = null;
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
       }
+      mediaRecorderRef.current = null;
       setVoiceListening(false);
       voiceListeningRef.current = false;
-      restartingRef.current = false;
-      networkErrorCountRef.current = 0;
+      if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
       return;
     }
 
-    // Start Web Speech API
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.error('[Voice] Web Speech API NOT supported in this browser!');
-      alert('当前浏览器不支持语音识别，请使用 Chrome 浏览器');
-      return;
-    }
+    // Request microphone and start recording
+    console.log('[Voice] Requesting microphone access...');
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        console.log('[Voice] Microphone access granted');
+        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        mediaRecorderRef.current = recorder;
+        audioChunksRef.current = [];
 
-    console.log('[Voice] Initializing SpeechRecognition, lang=zh-CN, continuous=true');
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'zh-CN';
-    recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
-
-    recognition.onstart = () => {
-      console.log('[Voice] Recognition STARTED successfully');
-      setVoiceListening(true);
-      voiceListeningRef.current = true;
-      restartingRef.current = false;
-      networkErrorCountRef.current = 0;
-    };
-
-    recognition.onresult = (event: { resultIndex: number; results: { length: number; [key: number]: { [key: number]: { transcript: string }; isFinal: boolean } } }) => {
-      const last = event.results[event.results.length - 1];
-      if (last.isFinal) {
-        const text = last[0].transcript.trim();
-        if (text) {
-          console.log('[Voice] Recognized:', text, '| TTS playing:', isPlayingRef.current);
-          setChatMessages(prev => [...prev.slice(-19), { from: 'user' as const, text, timestamp: Date.now() }]);
-          // TTS 播放中暂存，播完再发
-          if (isPlayingRef.current) {
-            console.log('[Voice] TTS playing, buffering command:', text);
-            pendingVoiceRef.current.push(text);
-          } else {
-            console.log('[Voice] Sending voice_command to backend');
-            wsRef.current?.send({
-              type: 'voice_command',
-              payload: { text, sessionId: sessionIdRef.current },
-            });
+        recorder.ondataavailable = (e: BlobEvent) => {
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
           }
-        }
-      }
-    };
+        };
 
-    recognition.onerror = (event: any) => {
-      console.error('[Voice] Recognition error:', event.error, event.message);
-      // not-allowed = 麦克风权限被拒
-      if (event.error === 'not-allowed') {
-        console.error('[Voice] Microphone permission DENIED');
+        recorder.onerror = (e: Event) => {
+          console.error('[Voice] MediaRecorder error:', e);
+        };
+
+        // Start recording in 3-second chunks
+        recorder.start(3000); // ondataavailable fires every 3s
+        setVoiceListening(true);
+        voiceListeningRef.current = true;
+        console.log('[Voice] MediaRecorder started, capturing 3s chunks');
+
+        // Every 3 seconds, send accumulated audio to backend for ASR
+        recordingTimerRef.current = setInterval(() => {
+          if (audioChunksRef.current.length === 0) return;
+          if (!wsRef.current) return;
+
+          const chunks = [...audioChunksRef.current];
+          audioChunksRef.current = [];
+
+          // Convert to base64
+          const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1]; // Remove "data:audio/webm;base64," prefix
+            if (base64 && base64.length > 100) { // Ignore near-empty chunks
+              console.log('[Voice] Sending audio chunk to backend, size:', base64.length, '| TTS playing:', isPlayingRef.current);
+              wsRef.current?.send({
+                type: 'voice_command',
+                payload: { base64Data: base64, sessionId: sessionIdRef.current },
+              });
+            }
+          };
+          reader.readAsDataURL(blob);
+        }, 3000);
+      })
+      .catch(err => {
+        console.error('[Voice] Microphone access denied:', err);
         setVoiceListening(false);
         voiceListeningRef.current = false;
-        return; // Don't restart
-      }
-      // network error — 可能需要VPN（Google Speech API 在中国被墙）
-      if (event.error === 'network') {
-        networkErrorCountRef.current++;
-        if (networkErrorCountRef.current >= 5) {
-          console.error('[Voice] Too many network errors, stopping. Google Speech API may be blocked — try VPN.');
-          setVoiceListening(false);
-          voiceListeningRef.current = false;
-          return;
-        }
-        console.warn(`[Voice] Network error #${networkErrorCountRef.current}/5 — Google Speech API may need VPN`);
-      }
-      // Only schedule restart from onerror, NOT from onend (avoid double-restart)
-      if (voiceListeningRef.current && !restartingRef.current) {
-        restartingRef.current = true;
-        const delay = event.error === 'network' ? 2000 : 500;
-        setTimeout(() => {
-          if (voiceListeningRef.current && recognitionRef.current === recognition) {
-            try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); restartingRef.current = false; }
-          }
-        }, delay);
-      }
-    };
-
-    recognition.onend = () => {
-      console.log('[Voice] Recognition ended, voiceListeningRef=', voiceListeningRef.current, 'restartingRef=', restartingRef.current);
-      // Only restart from onend if onerror didn't already schedule one
-      if (voiceListeningRef.current && !restartingRef.current) {
-        restartingRef.current = true;
-        setTimeout(() => {
-          if (voiceListeningRef.current && recognitionRef.current === recognition) {
-            try { recognition.start(); } catch (e) { console.error('[Voice] Restart failed:', e); restartingRef.current = false; }
-          }
-        }, 200);
-      }
-    };
-
-    try {
-      console.log('[Voice] Calling recognition.start()...');
-      recognition.start();
-    } catch (e) {
-      console.error('[Voice] Start failed:', e);
-    }
+      });
 
     return () => {
-      try { recognition.stop(); } catch { /* ignore */ }
-      recognitionRef.current = null;
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
+        // Stop all tracks
+        mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+        mediaRecorderRef.current = null;
+      }
+      if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+      audioChunksRef.current = [];
       setVoiceListening(false);
       voiceListeningRef.current = false;
-      restartingRef.current = false;
-      networkErrorCountRef.current = 0;
     };
   }, [voiceEnabled]);
 
@@ -784,7 +743,7 @@ export default function Dashboard() {
           selectedExercise={selectedExercise}
           onExerciseChange={setSelectedExercise}
           voiceEnabled={voiceEnabled}
-          voiceListening={voiceEnabled && isRunning}
+          voiceListening={voiceListening}
           onVoiceToggle={() => setVoiceEnabled(v => !v)}
           poseDetected={poseDetected}
           modelReady={modelReady}
