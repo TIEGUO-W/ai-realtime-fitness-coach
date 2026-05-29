@@ -24,64 +24,311 @@ function formatTime(seconds: number): string {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-/** Web Audio API 简单节奏生成器 */
+/* =========================================================
+   真实节拍合成器 — Web Audio API
+   Kick / Snare / HiHat / Bass / Lead 全部程序合成
+   ========================================================= */
+
+type DrumStep = { kick: boolean; snare: boolean; hihat: boolean; openHat: boolean };
+
+// 16-step drum patterns (1 bar = 16 sixteenth notes)
+const DRUM_PATTERNS: Record<string, DrumStep[]> = {
+  cyber: [
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: true,  hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: true,  hihat: true,  openHat: true  },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+  ],
+  rock: [
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: true,  hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: true,  hihat: true,  openHat: true  },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: true,  snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+  ],
+  zen: [
+    { kick: true,  snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: true,  snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: true,  openHat: true  },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+    { kick: false, snare: false, hihat: false, openHat: false },
+  ],
+};
+
+// Bass note patterns (MIDI note numbers, 0 = rest)
+const BASS_PATTERNS: Record<string, number[][]> = {
+  cyber: [
+    [36, 0, 0, 36, 0, 0, 36, 0, 36, 0, 0, 36, 0, 0, 36, 0],
+    [36, 0, 0, 36, 0, 0, 38, 0, 36, 0, 0, 36, 0, 0, 34, 0],
+  ],
+  rock: [
+    [28, 0, 0, 28, 0, 0, 28, 0, 28, 0, 0, 28, 0, 0, 31, 0],
+    [28, 0, 0, 28, 0, 0, 31, 0, 28, 0, 0, 28, 0, 0, 26, 0],
+  ],
+  zen: [
+    [36, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0],
+    [38, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0],
+  ],
+};
+
+// Lead melody patterns
+const LEAD_PATTERNS: Record<string, number[][]> = {
+  cyber: [
+    [60, 0, 63, 0, 67, 0, 0, 72, 0, 0, 67, 0, 63, 0, 60, 0],
+    [72, 0, 70, 0, 67, 0, 0, 63, 0, 0, 67, 0, 70, 0, 72, 0],
+  ],
+  rock: [
+    [40, 0, 43, 0, 47, 0, 0, 52, 0, 0, 47, 0, 43, 0, 40, 0],
+    [52, 0, 50, 0, 47, 0, 0, 43, 0, 0, 47, 0, 50, 0, 52, 0],
+  ],
+  zen: [
+    [60, 0, 0, 0, 0, 0, 67, 0, 0, 0, 0, 0, 72, 0, 0, 0],
+    [72, 0, 0, 0, 0, 0, 67, 0, 0, 0, 0, 0, 60, 0, 0, 0],
+  ],
+};
+
+const TRACK_CONFIG: Record<string, { bpm: number; swing: number; vol: number }> = {
+  cyber: { bpm: 128, swing: 0.0, vol: 0.18 },
+  rock:  { bpm: 140, swing: 0.02, vol: 0.2 },
+  zen:   { bpm: 70,  swing: 0.0, vol: 0.12 },
+};
+
+function midiToFreq(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
 function createMusicPlayer() {
   let ctx: AudioContext | null = null;
   let playing = false;
   let trackId = 'cyber';
-  let intervalId: ReturnType<typeof setInterval> | null = null;
-  let gainNode: GainNode | null = null;
+  let timerId: number | null = null;
+  let masterGain: GainNode | null = null;
+  let step = 0;
+  let bar = 0;
+  let nextNoteTime = 0;
 
-  const patterns: Record<string, { bpm: number; notes: number[]; freq: number }> = {
-    cyber: { bpm: 128, notes: [0, 0.5, 1, 0.5, 0.75, 0.25], freq: 80 },
-    rock: { bpm: 140, notes: [1, 0.75, 0.5, 1, 0.5, 0.25], freq: 100 },
-    zen: { bpm: 60, notes: [0.5, 0, 0.25, 0, 0.5, 0, 0.25, 0], freq: 60 },
-  };
+  // --- Synth helpers ---
+  function playKick(time: number) {
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(150, time);
+    osc.frequency.exponentialRampToValueAtTime(30, time + 0.12);
+    gain.gain.setValueAtTime(0.9, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+    osc.connect(gain);
+    gain.connect(masterGain!);
+    osc.start(time);
+    osc.stop(time + 0.3);
+  }
+
+  function playSnare(time: number) {
+    if (!ctx) return;
+    // Noise burst for snare
+    const bufferSize = ctx.sampleRate * 0.1;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * 0.8;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.5, time);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+    // Tone body
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = 180;
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.35, time);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+    // Filter
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 1000;
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(masterGain!);
+    osc.connect(oscGain);
+    oscGain.connect(masterGain!);
+    noise.start(time);
+    noise.stop(time + 0.12);
+    osc.start(time);
+    osc.stop(time + 0.08);
+  }
+
+  function playHiHat(time: number, open: boolean) {
+    if (!ctx) return;
+    const duration = open ? 0.15 : 0.04;
+    const bufferSize = ctx.sampleRate * duration;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(open ? 0.2 : 0.15, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 7000;
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain!);
+    noise.start(time);
+    noise.stop(time + duration);
+  }
+
+  function playBass(time: number, note: number) {
+    if (!ctx || note === 0) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = midiToFreq(note);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.25, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 5;
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain!);
+    osc.start(time);
+    osc.stop(time + 0.18);
+  }
+
+  function playLead(time: number, note: number) {
+    if (!ctx || note === 0) return;
+    const osc = ctx.createOscillator();
+    osc.type = trackId === 'cyber' ? 'square' : trackId === 'rock' ? 'sawtooth' : 'sine';
+    osc.frequency.value = midiToFreq(note);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(trackId === 'zen' ? 0.12 : 0.1, time);
+    gain.gain.setValueAtTime(trackId === 'zen' ? 0.12 : 0.1, time + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + (trackId === 'zen' ? 0.4 : 0.15));
+    // Delay/echo for cyber
+    if (trackId === 'cyber') {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 3000;
+      osc.connect(filter);
+      filter.connect(gain);
+    } else {
+      osc.connect(gain);
+    }
+    gain.connect(masterGain!);
+    osc.start(time);
+    osc.stop(time + 0.4);
+  }
+
+  // --- Sequencer ---
+  function scheduleStep() {
+    if (!ctx || !playing) return;
+
+    const config = TRACK_CONFIG[trackId];
+    const sixteenthDur = 60 / config.bpm / 4;
+    const swingOffset = (step % 2 === 1) ? config.swing * sixteenthDur : 0;
+    const noteTime = nextNoteTime + swingOffset;
+
+    const drumPattern = DRUM_PATTERNS[trackId];
+    const drum = drumPattern[step % drumPattern.length];
+    if (drum.kick) playKick(noteTime);
+    if (drum.snare) playSnare(noteTime);
+    if (drum.hihat) playHiHat(noteTime, false);
+    if (drum.openHat) playHiHat(noteTime, true);
+
+    // Bass — pick bar variation
+    const bassBars = BASS_PATTERNS[trackId];
+    const bassBar = bassBars[bar % bassBars.length];
+    const bassNote = bassBar[step % 16];
+    if (bassNote) playBass(noteTime, bassNote);
+
+    // Lead — pick bar variation
+    const leadBars = LEAD_PATTERNS[trackId];
+    const leadBar = leadBars[bar % leadBars.length];
+    const leadNote = leadBar[step % 16];
+    if (leadNote) playLead(noteTime, leadNote);
+
+    step++;
+    if (step % 16 === 0) bar++;
+    nextNoteTime += sixteenthDur;
+  }
+
+  function scheduler() {
+    if (!ctx || !playing) return;
+    // Schedule ahead 100ms
+    while (nextNoteTime < ctx.currentTime + 0.1) {
+      scheduleStep();
+    }
+  }
 
   function start() {
     if (playing) return;
     ctx = new AudioContext();
-    gainNode = ctx.createGain();
-    gainNode.gain.value = 0.08;
-    gainNode.connect(ctx.destination);
+    masterGain = ctx.createGain();
+    masterGain.gain.value = TRACK_CONFIG[trackId].vol;
+    masterGain.connect(ctx.destination);
     playing = true;
-    playLoop();
+    step = 0;
+    bar = 0;
+    nextNoteTime = ctx.currentTime;
+    timerId = window.setInterval(scheduler, 25);
   }
 
   function stop() {
     playing = false;
-    if (intervalId) { clearInterval(intervalId); intervalId = null; }
-    if (ctx) { ctx.close(); ctx = null; }
+    if (timerId !== null) { clearInterval(timerId); timerId = null; }
+    if (ctx) { ctx.close(); ctx = null; masterGain = null; }
   }
 
-  function setTrack(id: string) { trackId = id; }
-
-  function playLoop() {
-    if (!ctx || !gainNode) return;
-    const pattern = patterns[trackId];
-    const beatMs = (60 / pattern.bpm) * 1000;
-    let step = 0;
-
-    function tick() {
-      if (!ctx || !gainNode) return;
-      const vol = pattern.notes[step % pattern.notes.length];
-      if (vol > 0) {
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = trackId === 'zen' ? 'sine' : 'square';
-        osc.frequency.value = pattern.freq * (1 + (step % 4) * 0.5);
-        g.gain.setValueAtTime(vol * 0.06, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-        osc.connect(g);
-        g.connect(gainNode!);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.15);
-      }
-      step++;
+  function setTrack(id: string) {
+    trackId = id;
+    if (masterGain && ctx) {
+      masterGain.gain.value = TRACK_CONFIG[id].vol;
     }
-
-    intervalId = setInterval(tick, beatMs / 4);
-    tick();
+    // Reset sequence for new track
+    step = 0;
+    bar = 0;
+    nextNoteTime = ctx ? ctx.currentTime : 0;
   }
 
   return { start, stop, setTrack };
