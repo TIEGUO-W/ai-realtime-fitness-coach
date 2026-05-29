@@ -81,6 +81,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
 
     if (msg.type === 'voice_command') {
       const payload = msg.payload as { base64Data?: string; text?: string };
+      console.log('[coaching] voice_command received, text:', payload.text?.slice(0, 30), 'hasAudio:', !!payload.base64Data);
       try {
         let recognizedText = payload.text || '';
         if (payload.base64Data && !recognizedText) {

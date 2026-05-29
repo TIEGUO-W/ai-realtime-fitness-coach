@@ -387,6 +387,17 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
     }
   }, [isRunning, musicOn]);
 
+  // 训练开始 → 自动播放音乐
+  useEffect(() => {
+    if (isRunning && !musicOn) {
+      playerRef.current = createMusicPlayer();
+      playerRef.current.setTrack(musicTrack);
+      playerRef.current.start();
+      setMusicOn(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning]);
+
   return (
     <div className="flex items-stretch gap-3 px-4 py-2">
       {/* 控制按钮组 */}

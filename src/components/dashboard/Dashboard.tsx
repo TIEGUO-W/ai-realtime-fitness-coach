@@ -557,12 +557,14 @@ export default function Dashboard() {
       if (last.isFinal) {
         const text = last[0].transcript.trim();
         if (text) {
-          setVoiceMessages(prev => [...prev.slice(-9), { from: 'user', text }]);
+          console.log('[Voice] Recognized:', text, '| TTS playing:', isPlayingRef.current);
+          setChatMessages(prev => [...prev.slice(-19), { from: 'user' as const, text, timestamp: Date.now() }]);
           // TTS 播放中暂存，播完再发
           if (isPlayingRef.current) {
             console.log('[Voice] TTS playing, buffering command:', text);
             pendingVoiceRef.current.push(text);
           } else {
+            console.log('[Voice] Sending voice_command to backend');
             wsRef.current?.send({
               type: 'voice_command',
               payload: { text, sessionId: sessionIdRef.current },
