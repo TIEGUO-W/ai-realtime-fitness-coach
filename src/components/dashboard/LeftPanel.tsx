@@ -218,15 +218,6 @@ export default function LeftPanel({
           扫码连接健康数据
         </button>
 
-        {qrOpen && (
-          <div className="mt-3 flex flex-col items-center gap-2 animate-in slide-in-from-bottom-2 duration-200">
-            <div className="bg-white p-2 rounded-lg">
-              <QRCodeSVG value={typeof window !== 'undefined' ? window.location.href : ''} size={120} />
-            </div>
-            <p className="text-[9px] font-mono text-slate-500 text-center">用 iPhone 扫码添加到主屏幕</p>
-          </div>
-        )}
-
         {settingsOpen && (
           <div className="mt-3 space-y-3 animate-in slide-in-from-bottom-2 duration-200">
             {/* Personality */}
@@ -286,21 +277,21 @@ export default function LeftPanel({
         )}
       </div>
 
-      {/* QR Code Modal */}
+      {/* Apple Health QR Modal */}
       {qrOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setQrOpen(false)}>
           <div className="bg-[#0C1018] border border-cyber-cyan/20 rounded-2xl p-6 flex flex-col items-center gap-4 shadow-[0_0_30px_rgba(0,229,255,0.1)]" onClick={(e) => e.stopPropagation()}>
-            <span className="text-sm font-bold text-white tracking-wider">手机扫码训练</span>
+            <span className="text-sm font-bold text-white tracking-wider">连接 Apple Health</span>
             <div className="bg-white rounded-xl p-3">
               <QRCodeSVG
-                value={typeof window !== 'undefined' ? window.location.href : ''}
+                value={typeof window !== 'undefined' ? `${window.location.origin}/health` : ''}
                 size={180}
                 level="M"
                 fgColor="#05080F"
                 bgColor="#FFFFFF"
               />
             </div>
-            <span className="text-[10px] text-slate-400 text-center">用手机扫描二维码<br/>随时随地开始训练</span>
+            <span className="text-[10px] text-slate-400 text-center">用 iPhone 扫码连接 Apple Health<br/>同步心率、步数等健康数据</span>
             <button
               onClick={() => setQrOpen(false)}
               className="text-xs text-slate-400 hover:text-cyber-cyan transition-colors mt-1"

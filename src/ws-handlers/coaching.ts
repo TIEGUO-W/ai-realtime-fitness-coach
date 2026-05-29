@@ -94,7 +94,8 @@ export function handleCoachingConnection(ws: WebSocket): void {
         }
 
         if (!recognizedText) {
-          safeSend(ws, { type: 'voice_reply', payload: { text: '没听清，再说一遍？', audioUrl: null } });
+          // 静音/无效音频，不回复
+          console.log('[coaching] voice_command: no speech detected, skipping');
           return;
         }
 
