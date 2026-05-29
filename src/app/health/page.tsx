@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 
 type FitnessLevel = 'beginner' | 'intermediate' | 'advanced';
 type Goal = 'lose_weight' | 'build_muscle' | 'endurance' | 'general';
@@ -35,7 +34,6 @@ export default function HealthPage() {
   const [fitnessLevel, setFitness] = useState<FitnessLevel>('intermediate');
   const [goal, setGoal] = useState<Goal>('general');
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState<'url' | 'link' | null>(null);
 
   useEffect(() => {
     const existing = localStorage.getItem('health_session_id');
@@ -85,15 +83,6 @@ export default function HealthPage() {
     setAge(25);
     setFitness('intermediate');
     setGoal('general');
-  };
-
-  const apiUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/health?sessionId=${encodeURIComponent(sessionId)}` : '';
-  const coachLink = typeof window !== 'undefined' ? `${window.location.origin}/?session=${encodeURIComponent(sessionId)}` : '';
-
-  const handleCopy = (text: string, key: 'url' | 'link') => {
-    navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
   };
 
   const hasHeartRate = !!health?.heartRate;
@@ -237,26 +226,7 @@ export default function HealthPage() {
         {/* Shortcut Setup */}
         <Card className="border-[rgba(0,229,255,0.08)] bg-[#0C1018]">
           <CardContent className="p-4 space-y-3">
-            <h2 className="text-sm font-semibold text-[#6B7280] uppercase tracking-widest">快捷指令设置</h2>
-
-            {/* URL copy */}
-            <div>
-              <label className="text-[10px] text-[#6B7280] uppercase tracking-widest mb-1 block">服务器 URL</label>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={apiUrl}
-                  className="bg-[#0A0C12] border-[rgba(0,229,255,0.1)] text-[#00E5FF] text-xs font-mono truncate"
-                />
-                <Button
-                  onClick={() => handleCopy(apiUrl, 'url')}
-                  variant="outline"
-                  className="border-[rgba(0,229,255,0.2)] text-[#00E5FF] hover:bg-[rgba(0,229,255,0.1)] shrink-0 text-xs px-3"
-                >
-                  {copied === 'url' ? '✓' : '复制'}
-                </Button>
-              </div>
-            </div>
+            <h2 className="text-sm font-semibold text-[#6B7280] uppercase tracking-widest">快捷指令</h2>
 
             {/* Install shortcut */}
             <a
@@ -265,46 +235,21 @@ export default function HealthPage() {
               className="block w-full"
             >
               <Button className="w-full bg-white hover:bg-white/90 text-black text-sm py-5 font-medium">
-                安装快捷指令（已含循环，每2秒自动发心率）
+                安装快捷指令
               </Button>
             </a>
 
             {/* Simple instructions */}
             <div className="bg-[#0A0C12] rounded-xl p-3 border border-[rgba(0,229,255,0.06)]">
-              <h3 className="text-xs font-bold text-[#00E5FF] mb-2">使用步骤</h3>
-              <ol className="text-xs text-[#6B7280] space-y-1.5 list-decimal list-inside leading-relaxed">
+              <h3 className="text-xs font-bold text-[#00E5FF] mb-2">3 步连接</h3>
+              <ol className="text-xs text-[#6B7280] space-y-2 list-decimal list-inside leading-relaxed">
                 <li>点击上方按钮安装快捷指令</li>
-                <li>打开快捷指令，将复制的 URL 粘贴到 URL 输入框</li>
-                <li>运行快捷指令，心率会每 2 秒自动上传</li>
-                <li>在电脑上打开下方教练链接，心率实时同步</li>
+                <li>打开快捷指令，填入服务器地址后运行</li>
+                <li>心率每 2 秒自动上传，教练面板实时显示</li>
               </ol>
             </div>
           </CardContent>
         </Card>
-
-        {/* Coach Link - share to computer */}
-        {saved && (
-          <Card className="border-[rgba(0,229,255,0.15)] bg-[#0C1018]">
-            <CardContent className="p-4 space-y-3">
-              <h2 className="text-sm font-semibold text-[#00E5FF] uppercase tracking-widest">教练页面链接</h2>
-              <p className="text-xs text-[#6B7280]">在电脑浏览器打开此链接，心率数据会自动同步到教练面板</p>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={coachLink}
-                  className="bg-[#0A0C12] border-[rgba(0,229,255,0.1)] text-[#00E5FF] text-xs font-mono truncate"
-                />
-                <Button
-                  onClick={() => handleCopy(coachLink, 'link')}
-                  variant="outline"
-                  className="border-[rgba(0,229,255,0.2)] text-[#00E5FF] hover:bg-[rgba(0,229,255,0.1)] shrink-0 text-xs px-3"
-                >
-                  {copied === 'link' ? '✓' : '复制'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Disconnect / Reset */}
         <Card className="border-[rgba(255,71,87,0.08)] bg-[#0C1018]">

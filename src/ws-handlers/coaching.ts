@@ -49,10 +49,9 @@ export function handleCoachingConnection(ws: WebSocket): void {
   let lastAlgorithmPush = 0;
   let healthSessionId = '';
 
-  // Listen for Apple Health heart rate updates (filtered by sessionId)
+  // Listen for Apple Health heart rate updates — push to ALL connected dashboards
   const hrHandler = (data: { sessionId: string; heartRate: number }) => {
-    // Only push if sessionId matches (or no sessionId filter set yet)
-    if (ws.readyState === ws.OPEN && (!healthSessionId || data.sessionId === healthSessionId)) {
+    if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'heart_rate_update', payload: { heartRate: data.heartRate } }));
     }
   };

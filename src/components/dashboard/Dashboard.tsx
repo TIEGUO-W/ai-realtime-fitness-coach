@@ -374,12 +374,8 @@ export default function Dashboard() {
     });
     wsRef.current = ws;
     // Send health session ID so heart rate events are routed correctly
-    // Priority: URL param > localStorage > generate new
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlSid = urlParams.get('session');
-    const healthSid = urlSid || localStorage.getItem('health_session_id');
+    const healthSid = localStorage.getItem('health_session_id');
     if (healthSid) {
-      localStorage.setItem('health_session_id', healthSid);
       ws.send({ type: 'set_session', payload: { sessionId: healthSid } });
     }
     return () => { ws.close(); };
@@ -743,12 +739,9 @@ export default function Dashboard() {
 
   const handleStartWorkout = useCallback(() => {
     unlockMobileAudio();
-    // Use health session ID from localStorage or URL so Apple Health data matches
-    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    const urlSid = urlParams?.get('session');
-    const healthSid = urlSid || (typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null);
+    // Use health session ID from localStorage so Apple Health data matches
+    const healthSid = typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null;
     sessionIdRef.current = healthSid || `session_${Date.now()}`;
-    if (healthSid) localStorage.setItem('health_session_id', healthSid);
     startTimeRef.current = Date.now();
     completedRef.current = false;
     setRepCount(0);
