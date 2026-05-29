@@ -616,7 +616,7 @@ export class CoachSession {
         uid: 'coach-session',
         text,
         speaker: 'zh_female_xiaohe_uranus_bigtts',
-        speechRate: 0.15,
+        speechRate: 2,
       });
       console.log('[CoachSession] synthAndSend 结果:', result.audioUri ? '成功 ' + result.audioUri.slice(0, 60) : '无 audioUri');
       if (result.audioUri) {
