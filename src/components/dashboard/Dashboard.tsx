@@ -135,7 +135,22 @@ export default function Dashboard() {
     setIsSpeaking(true);
     try {
       const resp = await fetch(next.url);
+      if (!resp.ok) {
+        console.error('[TTS] fetch failed:', resp.status, resp.statusText);
+        isPlayingRef.current = false;
+        setIsSpeaking(false);
+        playNextInQueue();
+        return;
+      }
       const blob = await resp.blob();
+      console.log('[TTS] fetched audio blob:', blob.type, blob.size, 'bytes');
+      if (blob.size < 100) {
+        console.error('[TTS] audio blob too small, likely empty:', blob.size);
+        isPlayingRef.current = false;
+        setIsSpeaking(false);
+        playNextInQueue();
+        return;
+      }
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
       currentAudioRef.current = audio;
@@ -742,13 +757,19 @@ export default function Dashboard() {
   const unlockMobileAudio = useCallback(() => {
     if (audioUnlockedRef.current) return;
     try {
+      // Resume any existing suspended AudioContext
+      const existingCtx = (window as unknown as Record<string, unknown>).__lastAudioContext as AudioContext | undefined;
+      if (existingCtx && existingCtx.state === 'suspended') {
+        existingCtx.resume();
+      }
+      // Also create a short silent buffer to unlock iOS
       const ctx = new AudioContext();
+      (window as unknown as Record<string, unknown>).__lastAudioContext = ctx;
       const buffer = ctx.createBuffer(1, 1, 22050);
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
       source.start(0);
-      ctx.close();
       audioUnlockedRef.current = true;
       console.log('[Audio] Mobile audio unlocked');
     } catch { /* ignore */ }
@@ -798,8 +819,13 @@ export default function Dashboard() {
     connectionStatus: wsConnected ? 'connected' as const : 'disconnected' as const,
   };
 
+  const handleDashboardClick = useCallback(() => {
+    // Resume any suspended AudioContext on first user interaction
+    unlockMobileAudio();
+  }, []);
+
   return (
-    <div className="flex h-screen w-full bg-cyber-dark scanlines overflow-hidden">
+    <div className="flex h-screen w-full bg-cyber-dark scanlines overflow-hidden" onClick={handleDashboardClick}>
       {/* LEFT: AI Coach Panel */}
       <div className="w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.03]">
         <LeftPanel
