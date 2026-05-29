@@ -16,6 +16,7 @@ import {
   type Landmark,
   type AlgorithmUpdatePayload,
   type TTSReadyPayload,
+  type FrontendEffect,
 } from '@/lib/ws-client';
 
 // ─── MediaPipe Pose connections ─────────────────────
@@ -71,6 +72,7 @@ export default function Dashboard() {
   const [realHeartRate, setRealHeartRate] = useState<number | null>(null);
   const healthDataRef = useRef<any>(null);
   const [quality, setQuality] = useState<'good' | 'warning' | 'error'>('warning');
+  const [exerciseEffect, setExerciseEffect] = useState<FrontendEffect>(null);
   const [poseDetected, setPoseDetected] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [loadStage, setLoadStage] = useState('');
@@ -253,6 +255,7 @@ export default function Dashboard() {
         setRepCount(p.repCount);
         setDetectedExercise(p.exercise);
         setQuality(p.quality);
+        if (p.effect) setExerciseEffect(p.effect);
         setData(prev => ({
           ...prev,
           workout: {
@@ -282,6 +285,7 @@ export default function Dashboard() {
         setRepCount(fb.repCount);
         setDetectedExercise(fb.exercise);
         setQuality(fb.quality);
+        if (fb.effect) setExerciseEffect(fb.effect);
         const rawMsg = fb.encouragement || (fb.tips.length > 0 ? fb.tips[0] : '');
         const coachMsg = stripUrls(rawMsg);
         if (coachMsg) {
@@ -837,6 +841,9 @@ export default function Dashboard() {
           isSpeaking={isSpeaking}
           coachMessage={currentCoachMsgRef.current}
           chatMessages={chatMessages}
+          exerciseEffect={exerciseEffect}
+          qualityScore={data.workout.score}
+          repCount={repCount}
         />
       </div>
 

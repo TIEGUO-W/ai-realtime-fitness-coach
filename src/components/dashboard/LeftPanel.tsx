@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from '
 import dynamic from 'next/dynamic';
 import { QRCodeSVG } from 'qrcode.react';
 import type { DashboardData, CoachPersonality, CoachVoice, ChatMessage } from '@/types/dashboard';
+import type { FrontendEffect } from '@/lib/ws-client';
 import type { Application as SplineApp } from '@splinetool/runtime';
 
 /* ─── Dynamic Spline (avoid SSR) ─── */
@@ -46,6 +47,9 @@ interface LeftPanelProps {
   isSpeaking: boolean;
   coachMessage: string;
   chatMessages: ChatMessage[];
+  exerciseEffect?: FrontendEffect;
+  qualityScore?: number;
+  repCount?: number;
 }
 
 /* ─── Component ─── */
@@ -58,6 +62,9 @@ export default function LeftPanel({
   isSpeaking,
   coachMessage,
   chatMessages,
+  exerciseEffect,
+  qualityScore,
+  repCount,
 }: LeftPanelProps) {
   const isClient = useIsClient();
   const [activeModel, setActiveModel] = useState(0);
@@ -103,6 +110,67 @@ export default function LeftPanel({
     else { stopTalking(); }
   }, [isSpeaking, startTalking, stopTalking]);
 
+  /* ─── Monster exercise feedback animation ─── */
+  const [monsterTransform, setMonsterTransform] = useState({ scale: 1, rotate: 0, y: 0 });
+  const prevRepRef = useRef(repCount);
+
+  // Rep completion → bounce
+  useEffect(() => {
+    if (repCount !== undefined && repCount !== prevRepRef.current && repCount > 0) {
+      prevRepRef.current = repCount;
+      // bounce up then back
+      setMonsterTransform(prev => ({ ...prev, y: -20 }));
+      setTimeout(() => setMonsterTransform(prev => ({ ...prev, y: 0 })), 300);
+    }
+  }, [repCount]);
+
+  // Quality score → scale (bigger = better form)
+  useEffect(() => {
+    if (qualityScore !== undefined && qualityScore > 0) {
+      const targetScale = 0.85 + (qualityScore / 100) * 0.4; // 0.85 → 1.25
+      setMonsterTransform(prev => ({ ...prev, scale: targetScale }));
+    } else {
+      setMonsterTransform(prev => ({ ...prev, scale: 1 }));
+    }
+  }, [qualityScore]);
+
+  // Effect → rotation/shake
+  useEffect(() => {
+    if (!exerciseEffect) {
+      setMonsterTransform(prev => ({ ...prev, rotate: 0 }));
+      return;
+    }
+    switch (exerciseEffect) {
+      case 'perfect':
+      case 'excellent':
+        // happy wiggle
+        setMonsterTransform(prev => ({ ...prev, rotate: 8 }));
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: -8 })), 150);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 0 })), 300);
+        break;
+      case 'good':
+        // slight nod
+        setMonsterTransform(prev => ({ ...prev, rotate: 3 }));
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 0 })), 200);
+        break;
+      case 'adjust':
+        // warning shake
+        setMonsterTransform(prev => ({ ...prev, rotate: -6 }));
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 6 })), 120);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: -4 })), 240);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 0 })), 360);
+        break;
+      case 'warning':
+        // strong shake
+        setMonsterTransform(prev => ({ ...prev, rotate: -12 }));
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 12 })), 100);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: -10 })), 200);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 10 })), 300);
+        setTimeout(() => setMonsterTransform(prev => ({ ...prev, rotate: 0 })), 400);
+        break;
+    }
+  }, [exerciseEffect]);
+
   /* ─── Scroll chat to bottom ─── */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -114,22 +182,29 @@ export default function LeftPanel({
   return (
     <div className="flex flex-col h-full bg-cyber-panel/40">
       {/* ═══ Monster Zone ════════════════════════════ */}
-      <div className="relative w-full aspect-square max-h-[320px]">
+      <div className="relative w-full aspect-square max-h-[320px] overflow-hidden">
         {splineLoading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-8 h-8 border-2 border-cyber-cyan/20 border-t-cyber-cyan rounded-full animate-spin" />
           </div>
         )}
-        <Spline
-          scene={currentMonster.splineUrl}
-          onLoad={(spline) => {
-            splineRef.current = spline as SplineApp;
-            setSplineLoading(false);
-            const mouth = (spline as { findObjectByName?: (n: string) => Record<string, unknown> })?.findObjectByName?.('mouth');
-            if (mouth) console.log('[Spline] Found mouth object');
-            else console.warn('[Spline] No mouth object found');
+        <div
+          className="w-full h-full transition-transform duration-300 ease-out"
+          style={{
+            transform: `scale(${monsterTransform.scale}) rotate(${monsterTransform.rotate}deg) translateY(${monsterTransform.y}px)`,
           }}
-        />
+        >
+          <Spline
+            scene={currentMonster.splineUrl}
+            onLoad={(spline) => {
+              splineRef.current = spline as SplineApp;
+              setSplineLoading(false);
+              const mouth = (spline as { findObjectByName?: (n: string) => Record<string, unknown> })?.findObjectByName?.('mouth');
+              if (mouth) console.log('[Spline] Found mouth object');
+              else console.warn('[Spline] No mouth object found');
+            }}
+          />
+        </div>
 
         {/* Speaking indicator */}
         {isSpeaking && (
