@@ -180,10 +180,12 @@ export default function HealthPage() {
               <input
                 type="range" min={10} max={80} value={age}
                 onChange={(e) => setAge(Number(e.target.value))}
-                className="w-full h-1.5 bg-[#1A1D27] rounded-full appearance-none cursor-pointer
-                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                className="w-full h-2 bg-[#1A1D27] rounded-full appearance-none cursor-pointer
+                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
                   [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#00E5FF]
-                  [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(0,229,255,0.5)]"
+                  [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(0,229,255,0.5)]
+                  [&::-webkit-slider-thumb]:active:scale-110"
+                style={{ touchAction: 'manipulation', WebkitAppearance: 'none' }}
               />
               <div className="flex justify-between text-[9px] text-[#6B7280]/50 mt-0.5">
                 <span>10</span><span>80</span>

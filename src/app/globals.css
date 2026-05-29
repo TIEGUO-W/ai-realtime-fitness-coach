@@ -132,9 +132,19 @@
   }
 }
 
-body {
-  @apply font-sans;
+body.home-dashboard {
   overflow: hidden;
+}
+
+/* iOS range slider fix */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 ::-webkit-scrollbar {

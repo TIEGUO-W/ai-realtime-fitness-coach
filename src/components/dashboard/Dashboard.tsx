@@ -346,6 +346,12 @@ export default function Dashboard() {
     }
   }, [enqueueAudio]);
 
+  // ─── Lock body scroll on dashboard ─────────────────────────────
+  useEffect(() => {
+    document.body.classList.add('home-dashboard');
+    return () => { document.body.classList.remove('home-dashboard'); };
+  }, []);
+
   // ─── Connect WS ──────────────────────────────────────
   useEffect(() => {
     const ws = createWsConnection({
