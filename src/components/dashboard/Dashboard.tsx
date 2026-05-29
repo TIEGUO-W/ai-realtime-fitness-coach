@@ -169,11 +169,11 @@ export default function Dashboard() {
     if (pendingVoiceRef.current.length === 0) return;
     const commands = [...pendingVoiceRef.current];
     pendingVoiceRef.current = [];
-    console.log('[Voice] Flushing buffered commands:', commands.length);
-    for (const text of commands) {
+    console.log('[Voice] Flushing buffered audio chunks:', commands.length);
+    for (const base64Data of commands) {
       wsRef.current?.send({
         type: 'voice_command',
-        payload: { text, sessionId: sessionIdRef.current },
+        payload: { base64Data, sessionId: sessionIdRef.current },
       });
     }
   }, []);
@@ -525,70 +525,89 @@ export default function Dashboard() {
   // ─── Voice interaction (MediaRecorder + Backend ASR) ─────
   // 使用 MediaRecorder 录音 → WS 发 base64 → 后端 ASRClient 识别
   // 不再依赖 Web Speech API（Google 被墙），国内直连可用
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const pcmBufferRef = useRef<Int16Array[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Encode PCM samples to WAV (16-bit mono, 16000Hz)
+  const encodeWAV = (samples: Int16Array, sampleRate: number): ArrayBuffer => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);  // PCM
+    view.setUint16(22, 1, true);  // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);  // block align
+    view.setUint16(34, 16, true); // bits per sample
+    writeStr(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) { view.setInt16(44 + i * 2, samples[i], true); }
+    return buffer;
+  };
 
   useEffect(() => {
     if (!voiceEnabled) {
-      // Stop recording
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
-      }
-      mediaRecorderRef.current = null;
+      if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
+      if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
       setVoiceListening(false);
       voiceListeningRef.current = false;
       if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+      pcmBufferRef.current = [];
       return;
     }
 
-    // Request microphone and start recording
     console.log('[Voice] Requesting microphone access...');
-    navigator.mediaDevices.getUserMedia({ audio: true })
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true } })
       .then(stream => {
         console.log('[Voice] Microphone access granted');
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-        mediaRecorderRef.current = recorder;
-        audioChunksRef.current = [];
+        const audioCtx = new AudioContext({ sampleRate: 16000 });
+        audioCtxRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
-        recorder.ondataavailable = (e: BlobEvent) => {
-          if (e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
+        processor.onaudioprocess = (e: AudioProcessingEvent) => {
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
+          pcmBufferRef.current.push(int16);
         };
 
-        recorder.onerror = (e: Event) => {
-          console.error('[Voice] MediaRecorder error:', e);
-        };
-
-        // Start recording in 3-second chunks
-        recorder.start(3000); // ondataavailable fires every 3s
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
         setVoiceListening(true);
         voiceListeningRef.current = true;
-        console.log('[Voice] MediaRecorder started, capturing 3s chunks');
+        console.log('[Voice] AudioContext recording started, 16kHz mono PCM');
 
-        // Every 3 seconds, send accumulated audio to backend for ASR
         recordingTimerRef.current = setInterval(() => {
-          if (audioChunksRef.current.length === 0) return;
+          if (pcmBufferRef.current.length === 0) return;
           if (!wsRef.current) return;
-
-          const chunks = [...audioChunksRef.current];
-          audioChunksRef.current = [];
-
-          // Convert to base64
-          const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1]; // Remove "data:audio/webm;base64," prefix
-            if (base64 && base64.length > 100) { // Ignore near-empty chunks
-              console.log('[Voice] Sending audio chunk to backend, size:', base64.length, '| TTS playing:', isPlayingRef.current);
-              wsRef.current?.send({
-                type: 'voice_command',
-                payload: { base64Data: base64, sessionId: sessionIdRef.current },
-              });
+          const chunks = [...pcmBufferRef.current];
+          pcmBufferRef.current = [];
+          const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+          const merged = new Int16Array(totalLen);
+          let off = 0;
+          for (const c of chunks) { merged.set(c, off); off += c.length; }
+          const wavBuffer = encodeWAV(merged, 16000);
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
+          if (base64.length > 100) {
+            console.log('[Voice] Sending WAV chunk to backend, size:', base64.length, '| TTS playing:', isPlayingRef.current);
+            if (isPlayingRef.current) {
+              pendingVoiceRef.current.push(base64);
+            } else {
+              wsRef.current?.send({ type: 'voice_command', payload: { base64Data: base64, sessionId: sessionIdRef.current } });
             }
-          };
-          reader.readAsDataURL(blob);
+          }
         }, 3000);
       })
       .catch(err => {
@@ -598,18 +617,15 @@ export default function Dashboard() {
       });
 
     return () => {
-      if (mediaRecorderRef.current) {
-        try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
-        // Stop all tracks
-        mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
-        mediaRecorderRef.current = null;
-      }
+      if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
+      if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
       if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
-      audioChunksRef.current = [];
+      pcmBufferRef.current = [];
       setVoiceListening(false);
       voiceListeningRef.current = false;
     };
   }, [voiceEnabled]);
+
 
   // ─── Simulated heart rate (until real HR available) ───
   useEffect(() => {
