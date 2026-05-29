@@ -398,42 +398,102 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning]);
 
+  const scoreColor = workout.score >= 80 ? 'text-mint-green' : workout.score >= 60 ? 'text-cyber-cyan' : 'text-coral-red';
+
   return (
-    <div className="flex items-stretch gap-3 px-4 py-2">
-      {/* 控制按钮组 */}
-      <div className="flex flex-col gap-2 w-[150px] flex-shrink-0">
+    <div className="flex items-stretch gap-2.5">
+      {/* ── Data Cards Grid ────────────────────── */}
+      {/* 动作 */}
+      <div className="flex-1 min-w-0 rounded-xl bg-cyber-panel border border-white/[0.04] p-3 flex flex-col justify-between hover:border-cyber-cyan/15 transition-colors duration-200">
+        <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">动作</span>
+        <p className="mt-1.5 text-lg font-bold text-white truncate leading-tight">{workout.currentAction}</p>
+        <div className="mt-1 h-0.5 rounded-full bg-slate-800 overflow-hidden">
+          <div className="h-full bg-cyber-cyan/40 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (workout.reps / Math.max(1, workout.targetReps)) * 100)}%` }} />
+        </div>
+      </div>
+
+      {/* 心率 */}
+      <div className={`flex-1 min-w-0 rounded-xl border p-3 flex flex-col justify-between transition-colors duration-200 ${
+        isHrHigh
+          ? 'bg-red-950/30 border-coral-red/20 hover:border-coral-red/35'
+          : 'bg-cyber-panel border-white/[0.04] hover:border-cyber-cyan/15'
+      }`}>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">心率</span>
+          <HeartIcon />
+        </div>
+        <div className="flex items-baseline gap-1.5 mt-1.5">
+          <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${isHrHigh ? 'text-coral-red' : 'text-white'}`}>
+            {biometrics.heartRate || '--'}
+          </span>
+          {biometrics.heartRate > 0 && <span className="text-[9px] text-slate-500 font-mono">BPM</span>}
+        </div>
+      </div>
+
+      {/* 次数 */}
+      <div className="flex-1 min-w-0 rounded-xl bg-cyber-panel border border-white/[0.04] p-3 flex flex-col justify-between hover:border-cyber-cyan/15 transition-colors duration-200">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">次数</span>
+          {workout.isFormDeformed && (
+            <span className="inline-flex items-center gap-0.5 rounded-md bg-coral-red/15 px-1.5 py-0.5 text-[9px] font-semibold text-coral-red border border-coral-red/20">
+              变形
+            </span>
+          )}
+        </div>
+        <div className="flex items-baseline gap-1.5 mt-1.5">
+          <span className="text-2xl font-bold text-cyber-cyan font-mono tabular-nums leading-none">{workout.reps}</span>
+          <span className="text-[10px] text-slate-500 font-mono tabular-nums">/ {workout.targetReps}</span>
+        </div>
+      </div>
+
+      {/* 分数 */}
+      <div className="flex-1 min-w-0 rounded-xl bg-cyber-panel border border-white/[0.04] p-3 flex flex-col justify-between hover:border-cyber-cyan/15 transition-colors duration-200">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">分数</span>
+          <ProgressRing value={workout.score} max={100} />
+        </div>
+        <div className="flex items-baseline gap-1.5 mt-1.5">
+          <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${scoreColor}`}>
+            {workout.score}
+          </span>
+          <span className={`text-[9px] font-mono ${scoreColor}`}>
+            {workout.score >= 80 ? '优秀' : workout.score >= 60 ? '继续' : '加油'}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Music + Timer ────────────────────── */}
+      <div className="flex flex-col gap-2 w-[130px] flex-shrink-0">
         {/* 音乐选择器 */}
         <div className="relative flex-1">
           <button
             onClick={() => setMusicOpen((v) => !v)}
-            className={`w-full h-full flex items-center justify-between gap-1.5 rounded-xl backdrop-blur-md px-3 py-2 transition-all text-left ${
+            className={`w-full h-full flex items-center justify-between gap-1 rounded-xl px-2.5 py-1.5 transition-all text-left border ${
               musicOn
-                ? 'bg-cyber-cyan/15 border border-cyber-cyan/40'
-                : 'bg-slate-900/40 border border-cyber-cyan/20 hover:border-cyber-cyan/40'
+                ? 'bg-cyber-cyan/8 border-cyber-cyan/20'
+                : 'bg-cyber-panel border-white/[0.04] hover:border-cyber-cyan/15'
             }`}
           >
-            <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider leading-tight">
-              音乐
-            </span>
-            <span className={`text-[10px] font-mono truncate ${musicOn ? 'text-cyber-cyan' : 'text-slate-400'}`}>
+            <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider leading-none">音乐</span>
+            <span className={`text-[9px] font-mono truncate leading-none ${musicOn ? 'text-cyber-cyan' : 'text-slate-400'}`}>
               {MUSIC_TRACKS.find(t => t.id === musicTrack)?.label || '无'}
             </span>
-            <svg className="w-3 h-3 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-2.5 h-2.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
             </svg>
           </button>
           {musicOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMusicOpen(false)} />
-              <div className="absolute top-full mt-1 left-0 right-0 z-50 rounded-lg border border-slate-600/50 bg-slate-800/95 backdrop-blur-xl shadow-xl py-1 overflow-hidden">
+              <div className="absolute top-full mt-1 left-0 right-0 z-50 rounded-lg border border-white/[0.06] bg-cyber-panel/95 backdrop-blur-xl shadow-xl py-0.5 overflow-hidden">
                 {MUSIC_TRACKS.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => changeTrack(t.id)}
-                    className={`w-full text-left px-3 py-1.5 text-[10px] font-mono transition-colors ${
+                    className={`w-full text-left px-2.5 py-1.5 text-[10px] font-mono transition-colors ${
                       t.id === musicTrack
-                        ? 'text-cyber-cyan bg-cyber-cyan/10'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                        ? 'text-cyber-cyan bg-cyber-cyan/8'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.03]'
                     }`}
                   >
                     {t.icon} {t.label}
@@ -443,89 +503,35 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
             </>
           )}
         </div>
-        {/* 音乐播放/暂停 + 计时器 */}
+        {/* 播放/暂停 + 计时 */}
         <button
           onClick={toggleMusic}
-          className={`flex-1 group relative rounded-xl backdrop-blur-md px-3 py-2 transition-all duration-300 overflow-hidden ${
+          className={`flex-1 group rounded-xl px-2.5 py-1.5 transition-all duration-200 border ${
             musicOn
-              ? 'bg-cyber-cyan/15 border border-cyber-cyan/40'
-              : 'bg-slate-900/40 border border-cyber-cyan/20 hover:border-cyber-cyan/50'
+              ? 'bg-cyber-cyan/8 border-cyber-cyan/20'
+              : 'bg-cyber-panel border-white/[0.04] hover:border-cyber-cyan/15'
           }`}
         >
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-sm">{musicOn ? '⏸' : '▶'}</span>
-            <span className="text-[10px] font-mono text-cyber-cyan tabular-nums">
+          <div className="flex items-center justify-center gap-1.5">
+            <span className="text-[10px]">{musicOn ? '⏸' : '▶'}</span>
+            <span className="text-[10px] font-mono text-cyber-cyan tabular-nums tracking-wider">
               {isRunning ? formatTime(elapsed) : '--:--'}
             </span>
           </div>
         </button>
+        {/* AI定制计划 */}
         <button
           onClick={onOpenPlanModal}
-          className="flex-1 group relative rounded-xl bg-slate-900/40 backdrop-blur-md
-                     border border-cyber-cyan/20 hover:border-cyber-cyan/50
-                     px-3 py-2 transition-all duration-300 overflow-hidden"
+          className="flex-1 group rounded-xl bg-cyber-panel border border-white/[0.04]
+                     hover:border-flame-orange/25 px-2.5 py-1.5 transition-all duration-200 overflow-hidden"
         >
-          <div className="absolute inset-0 bg-gradient-to-r from-cyber-cyan/0 via-cyber-cyan/5 to-cyber-cyan/0 opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="relative flex items-center justify-center gap-1.5">
-            <span className="text-xs group-hover:animate-pulse">⚡</span>
-            <span className="text-[10px] font-semibold text-cyber-cyan tracking-wide group-hover:drop-shadow-[0_0_6px_rgba(0,229,255,0.5)] transition-all whitespace-nowrap">
-              AI 定制计划
+          <div className="flex items-center justify-center gap-1">
+            <span className="text-[9px] group-hover:animate-pulse">⚡</span>
+            <span className="text-[9px] font-semibold text-flame-orange tracking-wide whitespace-nowrap">
+              AI 计划
             </span>
           </div>
         </button>
-      </div>
-
-      {/* 动作 */}
-      <div className="flex-1 rounded-xl bg-slate-900/50 backdrop-blur-md border-t border-t-cyan-500/50 border-x border-x-slate-700/30 border-b border-b-slate-700/30 p-3 flex flex-col justify-center">
-        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">动作</span>
-        <p className="mt-1 text-base font-semibold text-white truncate">{workout.currentAction}</p>
-      </div>
-
-      {/* 心率 */}
-      <div
-        className={`flex-1 rounded-xl backdrop-blur-md p-3 flex flex-col justify-center ${
-          isHrHigh
-            ? 'bg-red-950/50 border-t border-t-red-500/50 border-x border-x-red-800/30 border-b border-b-red-800/30'
-            : 'bg-slate-900/50 border-t border-t-cyan-500/50 border-x border-x-slate-700/30 border-b border-b-slate-700/30'
-        }`}
-      >
-        <div className="flex items-start justify-between">
-          <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">心率</span>
-          <HeartIcon />
-        </div>
-        <div className="flex items-baseline gap-1 mt-1">
-          <span className={`text-xl font-bold font-mono tabular-nums ${isHrHigh ? 'text-red-400' : 'text-white'}`}>
-            {biometrics.heartRate || '--'}
-          </span>
-          {biometrics.heartRate > 0 && <span className="text-[10px] text-slate-400 font-mono">BPM</span>}
-        </div>
-      </div>
-
-      {/* 次数 */}
-      <div className="flex-1 rounded-xl bg-slate-900/50 backdrop-blur-md border-t border-t-cyan-500/50 border-x border-x-slate-700/30 border-b border-b-slate-700/30 p-3 flex flex-col justify-center">
-        <div className="flex items-start justify-between">
-          <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">次数</span>
-          {workout.isFormDeformed && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-red-900/60 px-1.5 py-0.5 text-[9px] font-semibold text-red-300 border border-red-700/40">
-              ⚠ 变形
-            </span>
-          )}
-        </div>
-        <div className="flex items-baseline gap-1 mt-1">
-          <span className="text-xl font-bold text-cyber-cyan font-mono tabular-nums">{workout.reps}</span>
-          <span className="text-[10px] text-slate-500 font-mono tabular-nums">/ {workout.targetReps}</span>
-        </div>
-      </div>
-
-      {/* 分数 */}
-      <div className="flex-1 rounded-xl bg-slate-900/50 backdrop-blur-md border-t border-t-cyan-500/50 border-x border-x-slate-700/30 border-b border-b-slate-700/30 p-3 flex flex-col justify-center">
-        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">分数</span>
-        <div className="flex items-center justify-between mt-1">
-          <p className="text-xs font-medium text-cyber-cyan">
-            {workout.score >= 80 ? '优秀' : workout.score >= 60 ? '继续' : '加油'}
-          </p>
-          <ProgressRing value={workout.score} max={100} />
-        </div>
       </div>
     </div>
   );

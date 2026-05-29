@@ -56,71 +56,70 @@
 
 :root {
   --radius: 0.625rem;
-  /* 强制暗色主题变量 */
-  --background: #0F1117;
-  --foreground: #E8E9ED;
-  --card: #1A1D27;
-  --card-foreground: #E8E9ED;
-  --popover: #1A1D27;
-  --popover-foreground: #E8E9ED;
+  --background: #05080F;
+  --foreground: #F0F1F5;
+  --card: #0C1018;
+  --card-foreground: #F0F1F5;
+  --popover: #0C1018;
+  --popover-foreground: #F0F1F5;
   --primary: #FF6B35;
   --primary-foreground: #FFFFFF;
-  --secondary: #252836;
-  --secondary-foreground: #E8E9ED;
-  --muted: #252836;
-  --muted-foreground: #8B8FA3;
-  --accent: #252836;
-  --accent-foreground: #E8E9ED;
+  --secondary: #111827;
+  --secondary-foreground: #F0F1F5;
+  --muted: #111827;
+  --muted-foreground: #6B7280;
+  --accent: #111827;
+  --accent-foreground: #F0F1F5;
   --destructive: #FF4757;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.12);
+  --border: rgba(0, 229, 255, 0.08);
+  --input: rgba(0, 229, 255, 0.12);
   --ring: #FF6B35;
   --chart-1: #FF6B35;
   --chart-2: #22D3A7;
   --chart-3: #FF4757;
   --chart-4: #FFD93D;
   --chart-5: #6C63FF;
-  --sidebar: #0F1117;
-  --sidebar-foreground: #E8E9ED;
+  --sidebar: #05080F;
+  --sidebar-foreground: #F0F1F5;
   --sidebar-primary: #FF6B35;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #252836;
-  --sidebar-accent-foreground: #E8E9ED;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-accent: #111827;
+  --sidebar-accent-foreground: #F0F1F5;
+  --sidebar-border: rgba(0, 229, 255, 0.08);
   --sidebar-ring: #FF6B35;
 }
 
 .dark {
-  --background: #0F1117;
-  --foreground: #E8E9ED;
-  --card: #1A1D27;
-  --card-foreground: #E8E9ED;
-  --popover: #1A1D27;
-  --popover-foreground: #E8E9ED;
+  --background: #05080F;
+  --foreground: #F0F1F5;
+  --card: #0C1018;
+  --card-foreground: #F0F1F5;
+  --popover: #0C1018;
+  --popover-foreground: #F0F1F5;
   --primary: #FF6B35;
   --primary-foreground: #FFFFFF;
-  --secondary: #252836;
-  --secondary-foreground: #E8E9ED;
-  --muted: #252836;
-  --muted-foreground: #8B8FA3;
-  --accent: #252836;
-  --accent-foreground: #E8E9ED;
+  --secondary: #111827;
+  --secondary-foreground: #F0F1F5;
+  --muted: #111827;
+  --muted-foreground: #6B7280;
+  --accent: #111827;
+  --accent-foreground: #F0F1F5;
   --destructive: #FF4757;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.12);
+  --border: rgba(0, 229, 255, 0.08);
+  --input: rgba(0, 229, 255, 0.12);
   --ring: #FF6B35;
   --chart-1: #FF6B35;
   --chart-2: #22D3A7;
   --chart-3: #FF4757;
   --chart-4: #FFD93D;
   --chart-5: #6C63FF;
-  --sidebar: #0F1117;
-  --sidebar-foreground: #E8E9ED;
+  --sidebar: #05080F;
+  --sidebar-foreground: #F0F1F5;
   --sidebar-primary: #FF6B35;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #252836;
-  --sidebar-accent-foreground: #E8E9ED;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-accent: #111827;
+  --sidebar-accent-foreground: #F0F1F5;
+  --sidebar-border: rgba(0, 229, 255, 0.08);
   --sidebar-ring: #FF6B35;
 }
 
@@ -138,22 +137,20 @@ body {
   overflow: hidden;
 }
 
-/* 自定义滚动条 */
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 3px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #252836;
+  background: rgba(0, 229, 255, 0.15);
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #8B8FA3;
+  background: rgba(0, 229, 255, 0.3);
 }
 
-/* Progress bar 暗色主题覆盖 */
 [role="progressbar"] > div {
   background: #FF6B35 !important;
 }
@@ -162,26 +159,37 @@ body {
 
 @theme inline {
   --color-cyber-cyan: #00E5FF;
-  --color-cyber-dark: #060B15;
+  --color-cyber-dark: #05080F;
   --color-cyber-magenta: #FF00E5;
+  --color-cyber-panel: #0C1018;
+  --color-cyber-surface: #111827;
+  --color-flame-orange: #FF6B35;
+  --color-mint-green: #22D3A7;
+  --color-coral-red: #FF4757;
 }
 
-/* Neon glow utility */
+/* Glow utilities */
 .glow-cyan {
   box-shadow:
-    0 0 5px rgba(0, 229, 255, 0.3),
-    0 0 15px rgba(0, 229, 255, 0.1),
-    inset 0 0 5px rgba(0, 229, 255, 0.05);
+    0 0 5px rgba(0, 229, 255, 0.2),
+    0 0 15px rgba(0, 229, 255, 0.06),
+    inset 0 0 5px rgba(0, 229, 255, 0.03);
 }
 
 .glow-cyan-border {
-  border-color: rgba(0, 229, 255, 0.35);
+  border-color: rgba(0, 229, 255, 0.2);
   box-shadow:
-    0 0 6px rgba(0, 229, 255, 0.2),
-    inset 0 0 6px rgba(0, 229, 255, 0.05);
+    0 0 6px rgba(0, 229, 255, 0.1),
+    inset 0 0 6px rgba(0, 229, 255, 0.03);
 }
 
-/* Scan line overlay for cyberpunk feel */
+.glow-orange {
+  box-shadow:
+    0 0 5px rgba(255, 107, 53, 0.2),
+    0 0 15px rgba(255, 107, 53, 0.06);
+}
+
+/* Scan line overlay */
 .scanlines::after {
   content: '';
   position: absolute;
@@ -190,51 +198,31 @@ body {
     0deg,
     transparent,
     transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
+    rgba(0, 0, 0, 0.015) 2px,
+    rgba(0, 0, 0, 0.015) 4px
   );
   pointer-events: none;
   z-index: 50;
 }
 
-/* Chat bubble tail */
-.bubble-tail::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 16px;
-  width: 0;
-  height: 0;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-right: 8px solid rgba(15, 23, 42, 0.9);
-}
+/* ═══ Animations ══════════════════════════════════ */
 
-.bubble-tail-alert::before {
-  border-right-color: rgba(127, 29, 29, 0.95);
-}
-
-/* Popup slide-in animation */
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(16px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-
 .animate-slide-up {
   animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Avatar glow pulse */
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 16px rgba(0, 229, 255, 0.1); }
-  50%      { box-shadow: 0 0 28px rgba(0, 229, 255, 0.25); }
+  0%, 100% { box-shadow: 0 0 12px rgba(0, 229, 255, 0.08); }
+  50%      { box-shadow: 0 0 24px rgba(0, 229, 255, 0.2); }
 }
-
 .avatar-glow {
   animation: glow-pulse 3s ease-in-out infinite;
 }
 
-/* Heartbeat animation */
 @keyframes heartbeat {
   0%, 100% { transform: scale(1); }
   14% { transform: scale(1.2); }
@@ -242,23 +230,19 @@ body {
   42% { transform: scale(1.15); }
   56% { transform: scale(1); }
 }
-
 .animate-heartbeat {
   animation: heartbeat 1.5s ease-in-out infinite;
 }
 
-/* Pulse dot animation */
 @keyframes pulse-dot {
   0% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.5); }
   100% { opacity: 1; transform: scale(1); }
 }
-
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* Monster shake animation */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-4px) rotate(-1deg); }
@@ -267,12 +251,37 @@ body {
   80% { transform: translateX(3px) rotate(0.5deg); }
 }
 
-/* Monster pulse animation (form deformation warning) */
 @keyframes monster-pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.04); }
 }
-
 .animate-monster-pulse {
   animation: monster-pulse 0.8s ease-in-out infinite;
+}
+
+/* Data value flash on change */
+@keyframes data-flash {
+  0% { color: #00E5FF; text-shadow: 0 0 8px rgba(0,229,255,0.5); }
+  100% { color: inherit; text-shadow: none; }
+}
+.animate-data-flash {
+  animation: data-flash 0.4s ease-out;
+}
+
+/* Fade-in for new chat messages */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out forwards;
+}
+
+/* Breathing border glow for active card */
+@keyframes border-breathe {
+  0%, 100% { border-color: rgba(0, 229, 255, 0.15); }
+  50%      { border-color: rgba(0, 229, 255, 0.3); }
+}
+.animate-border-breathe {
+  animation: border-breathe 3s ease-in-out infinite;
 }

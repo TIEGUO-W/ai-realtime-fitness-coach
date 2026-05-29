@@ -726,8 +726,8 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen w-full bg-cyber-dark scanlines overflow-hidden">
-      {/* LEFT: AI Coach (1/4) */}
-      <div className="w-1/4 flex-shrink-0 flex flex-col">
+      {/* LEFT: AI Coach Panel */}
+      <div className="w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.03]">
         <LeftPanel
           data={data}
           personality={personality}
@@ -740,10 +740,7 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* CYAN DIVIDER */}
-      <div className="w-px flex-shrink-0 bg-gradient-to-b from-transparent via-cyber-cyan/40 to-transparent shadow-[0_0_6px_rgba(0,229,255,0.15)]" />
-
-      {/* RIGHT: Data + Camera (3/4) */}
+      {/* RIGHT: Data + Camera */}
       <div className="flex-1 flex flex-col min-w-0">
         <RightPanel
           workout={data.workout}
