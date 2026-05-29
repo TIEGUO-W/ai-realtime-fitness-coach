@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useSyncExternalStore, type ComponentProps } from 'react';
-import { LazySpline } from './SplineLoader';
+import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
+import dynamic from 'next/dynamic';
 import type { DashboardData, CoachPersonality, CoachVoice, ChatMessage } from '@/types/dashboard';
 import type { Application as SplineApp } from '@splinetool/runtime';
+
+/* ─── Dynamic Spline (avoid SSR) ─── */
+const Spline = dynamic(() => import('@splinetool/react-spline'), { ssr: false });
 
 /* ─── Hydration-safe client detection ─── */
 const emptySubscribe = () => () => {};
@@ -115,7 +118,7 @@ export default function LeftPanel({
             <div className="w-8 h-8 border-2 border-cyber-cyan/20 border-t-cyber-cyan rounded-full animate-spin" />
           </div>
         )}
-        <LazySpline
+        <Spline
           scene={currentMonster.splineUrl}
           onLoad={(spline) => {
             splineRef.current = spline as SplineApp;
