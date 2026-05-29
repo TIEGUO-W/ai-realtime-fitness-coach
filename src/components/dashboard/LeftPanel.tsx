@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
 import type { DashboardData, CoachPersonality, CoachVoice, ChatMessage } from '@/types/dashboard';
 import {
@@ -14,6 +14,11 @@ import { PERSONALITY_LABELS, PERSONALITY_EMOJI, VOICE_LABELS } from '@/utils/coa
 
 // Dynamic import Spline to avoid SSR issues
 const Spline = dynamic(() => import('@splinetool/react-spline'), { ssr: false });
+
+// Hydration-safe client-only detection
+const emptySubscribe = () => () => {};
+const getSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 interface LeftPanelProps {
   data: DashboardData;
@@ -85,6 +90,7 @@ export default function LeftPanel({
   coachMessage = '',
   chatMessages = [],
 }: LeftPanelProps) {
+  const isClient = useSyncExternalStore(emptySubscribe, getSnapshot, getServerSnapshot);
   const { assistant, biometrics, workout } = data;
 
   const rawIntensity = computeIntensity(
@@ -292,7 +298,11 @@ export default function LeftPanel({
 
         {/* 气泡式对话历史 */}
         <div className="flex flex-col gap-2 overflow-hidden pr-1">
-          {chatMessages && chatMessages.length > 0 ? (
+          {!isClient ? (
+            <p className="text-base font-semibold leading-relaxed text-white">
+              &ldquo;准备好了吗？&rdquo;
+            </p>
+          ) : chatMessages && chatMessages.length > 0 ? (
             chatMessages.slice(-2).map((msg) => (
               <div key={msg.timestamp} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] px-3 py-1.5 rounded-xl text-[13px] leading-snug ${
