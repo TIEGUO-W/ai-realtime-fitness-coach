@@ -134,6 +134,7 @@ export default function RightPanel({
         workout={workout}
         biometrics={biometrics}
         onOpenPlanModal={onOpenPlanModal}
+        isRunning={isRunning}
       />
 
       {/* Camera / Skeleton View */}
