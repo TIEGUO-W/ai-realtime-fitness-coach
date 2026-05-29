@@ -336,7 +336,8 @@ function createMusicPlayer() {
 }
 
 export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunning }: StatsRowProps) {
-  const isHrHigh = biometrics.heartRate > biometrics.hrThreshold;
+  const hasHR = biometrics.heartRate > 0;
+  const isHrHigh = hasHR && biometrics.heartRate > biometrics.hrThreshold;
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(0);
   const playerRef = useRef(createMusicPlayer());
@@ -415,19 +416,27 @@ export default function StatsRow({ workout, biometrics, onOpenPlanModal, isRunni
 
       {/* 心率 */}
       <div className={`flex-1 min-w-0 rounded-xl border p-3 flex flex-col justify-between transition-colors duration-200 ${
-        isHrHigh
-          ? 'bg-red-950/30 border-coral-red/20 hover:border-coral-red/35'
-          : 'bg-cyber-panel border-white/[0.04] hover:border-cyber-cyan/15'
+        !hasHR
+          ? 'bg-cyber-panel border-white/[0.04] hover:border-white/[0.08]'
+          : isHrHigh
+            ? 'bg-red-950/30 border-coral-red/20 hover:border-coral-red/35'
+            : 'bg-cyber-panel border-white/[0.04] hover:border-cyber-cyan/15'
       }`}>
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.15em]">心率</span>
           <HeartIcon />
         </div>
         <div className="flex items-baseline gap-1.5 mt-1.5">
-          <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${isHrHigh ? 'text-coral-red' : 'text-white'}`}>
-            {biometrics.heartRate || '--'}
-          </span>
-          {biometrics.heartRate > 0 && <span className="text-[9px] text-slate-500 font-mono">BPM</span>}
+          {hasHR ? (
+            <>
+              <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${isHrHigh ? 'text-coral-red' : 'text-white'}`}>
+                {biometrics.heartRate}
+              </span>
+              <span className="text-[9px] text-slate-500 font-mono">BPM</span>
+            </>
+          ) : (
+            <span className="text-sm text-slate-600 font-mono leading-none">未连接</span>
+          )}
         </div>
       </div>
 

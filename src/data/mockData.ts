@@ -2,7 +2,7 @@ import type { DashboardData } from '@/types/dashboard';
 import { getCoachMessage } from '@/utils/coachVoice';
 
 const initialAction = '深蹲';
-const initialHR = 168;
+const initialHR = 0; // No simulated heart rate — real data from Apple Health
 const initialScore = 85;
 
 export const mockData: DashboardData = {

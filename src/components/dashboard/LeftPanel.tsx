@@ -292,10 +292,9 @@ export default function LeftPanel({
               />
             </div>
             <div className="flex flex-col items-center gap-2">
-              <span className="text-[10px] text-slate-400 text-center">用 iPhone 扫码连接 Apple Health<br/>同步心率、步数等健康数据</span>
+              <span className="text-[10px] text-slate-400 text-center">用 iPhone 扫码打开健康档案页面<br/>填写信息 + 安装快捷指令同步心率</span>
               <div className="w-full h-px bg-cyber-cyan/10 my-1" />
-              <span className="text-[10px] text-cyber-cyan/60 text-center font-mono">快捷指令 URL:</span>
-              <span className="text-[10px] text-cyber-cyan/80 font-mono break-all text-center select-all">{typeof window !== 'undefined' ? `${window.location.origin}/api/health` : ''}</span>
+              <span className="text-[10px] text-cyber-cyan/60 text-center font-mono">扫码后在页面内复制 URL</span>
             </div>
             <button
               onClick={() => setQrOpen(false)}

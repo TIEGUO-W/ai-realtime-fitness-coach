@@ -34,6 +34,8 @@ const store = new Map<string, WatchHealthData>();
 const emitter = new EventEmitter();
 
 function key(sessionId: string): string {
+  // Avoid double-prefix if sessionId already starts with "sess_"
+  if (sessionId.startsWith('sess_')) return sessionId;
   return `sess_${sessionId}`;
 }
 

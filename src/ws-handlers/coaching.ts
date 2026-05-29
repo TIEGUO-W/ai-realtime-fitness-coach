@@ -47,10 +47,12 @@ export function handleCoachingConnection(ws: WebSocket): void {
   const session = new CoachSession(ws);
   let currentExercise = 'squat';
   let lastAlgorithmPush = 0;
+  let healthSessionId = '';
 
-  // Listen for Apple Health heart rate updates
+  // Listen for Apple Health heart rate updates (filtered by sessionId)
   const hrHandler = (data: { sessionId: string; heartRate: number }) => {
-    if (ws.readyState === ws.OPEN) {
+    // Only push if sessionId matches (or no sessionId filter set yet)
+    if (ws.readyState === ws.OPEN && (!healthSessionId || data.sessionId === healthSessionId)) {
       ws.send(JSON.stringify({ type: 'heart_rate_update', payload: { heartRate: data.heartRate } }));
     }
   };
@@ -72,7 +74,10 @@ export function handleCoachingConnection(ws: WebSocket): void {
     // 前端传 sessionId 绑定健康数据
     if (msg.type === 'set_session') {
       const sid = (msg.payload as { sessionId: string }).sessionId;
-      if (sid) session.setSessionId(sid);
+      if (sid) {
+        healthSessionId = sid;
+        session.setSessionId(sid);
+      }
       return;
     }
 

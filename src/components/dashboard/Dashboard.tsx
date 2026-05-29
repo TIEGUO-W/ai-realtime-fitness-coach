@@ -367,6 +367,11 @@ export default function Dashboard() {
       },
     });
     wsRef.current = ws;
+    // Send health session ID so heart rate events are routed correctly
+    const healthSid = localStorage.getItem('health_session_id');
+    if (healthSid) {
+      ws.send({ type: 'set_session', payload: { sessionId: healthSid } });
+    }
     return () => { ws.close(); };
   }, [handleWsMessage]);
 
@@ -663,24 +668,8 @@ export default function Dashboard() {
   }, [voiceEnabled]);
 
 
-  // ─── Simulated heart rate (until real HR available) ───
-  useEffect(() => {
-    if (!isRunning) return;
-    const interval = setInterval(() => {
-      setData(prev => {
-        const baseHR = 75 + (isRunning ? 60 : 0);
-        const variance = Math.floor(Math.random() * 20) - 10;
-        return {
-          ...prev,
-          biometrics: {
-            ...prev.biometrics,
-            heartRate: Math.max(60, Math.min(190, baseHR + variance + repCount)),
-          },
-        };
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isRunning, repCount]);
+  // Heart rate comes from real Apple Health data via WS (heart_rate_update)
+  // No simulated heart rate — if no real data, show "未连接"
 
   // ─── Coach personality: fallback only when backend is silent ───
   const lastCoachMsgTimeRef = useRef(Date.now());
@@ -744,7 +733,9 @@ export default function Dashboard() {
 
   const handleStartWorkout = useCallback(() => {
     unlockMobileAudio();
-    sessionIdRef.current = `session_${Date.now()}`;
+    // Use health session ID from localStorage so Apple Health data matches
+    const healthSid = typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null;
+    sessionIdRef.current = healthSid || `session_${Date.now()}`;
     startTimeRef.current = Date.now();
     completedRef.current = false;
     setRepCount(0);
@@ -753,6 +744,10 @@ export default function Dashboard() {
       ...prev,
       workout: { ...prev.workout, reps: 0 },
     }));
+    wsRef.current?.send({
+      type: 'set_session',
+      payload: { sessionId: sessionIdRef.current },
+    });
     wsRef.current?.send({
       type: 'set_exercise',
       payload: { exercise: selectedExercise },
@@ -800,7 +795,7 @@ export default function Dashboard() {
       <div className="flex-1 flex flex-col min-w-0">
         <RightPanel
           workout={data.workout}
-          biometrics={{ ...data.biometrics, heartRate: realHeartRate ?? data.biometrics.heartRate }}
+          biometrics={{ ...data.biometrics, heartRate: realHeartRate ?? 0 }}
           environment={environment}
           connectionError={loadError || undefined}
           onOpenPlanModal={() => setPlanModalOpen(true)}
