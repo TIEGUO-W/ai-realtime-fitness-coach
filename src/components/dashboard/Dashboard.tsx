@@ -166,16 +166,7 @@ export default function Dashboard() {
 
   // Flush buffered voice commands after TTS queue is empty
   const flushPendingVoice = useCallback(() => {
-    if (pendingVoiceRef.current.length === 0) return;
-    const commands = [...pendingVoiceRef.current];
-    pendingVoiceRef.current = [];
-    console.log('[Voice] Flushing buffered audio chunks:', commands.length);
-    for (const base64Data of commands) {
-      wsRef.current?.send({
-        type: 'voice_command',
-        payload: { base64Data, sessionId: sessionIdRef.current },
-      });
-    }
+    // No longer buffering — voice commands are sent immediately
   }, []);
 
   // Enqueue audio URL with priority
@@ -601,12 +592,8 @@ export default function Dashboard() {
           const wavBuffer = encodeWAV(merged, 16000);
           const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
           if (base64.length > 100) {
-            console.log('[Voice] Sending WAV chunk to backend, size:', base64.length, '| TTS playing:', isPlayingRef.current);
-            if (isPlayingRef.current) {
-              pendingVoiceRef.current.push(base64);
-            } else {
-              wsRef.current?.send({ type: 'voice_command', payload: { base64Data: base64, sessionId: sessionIdRef.current } });
-            }
+            console.log('[Voice] Sending WAV chunk to backend, size:', base64.length);
+            wsRef.current?.send({ type: 'voice_command', payload: { base64Data: base64, sessionId: sessionIdRef.current } });
           }
         }, 3000);
       })
