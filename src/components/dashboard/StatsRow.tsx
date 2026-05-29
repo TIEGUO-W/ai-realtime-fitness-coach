@@ -122,9 +122,9 @@ const LEAD_PATTERNS: Record<string, number[][]> = {
 };
 
 const TRACK_CONFIG: Record<string, { bpm: number; swing: number; vol: number }> = {
-  cyber: { bpm: 128, swing: 0.0, vol: 0.18 },
-  rock:  { bpm: 140, swing: 0.02, vol: 0.2 },
-  zen:   { bpm: 70,  swing: 0.0, vol: 0.12 },
+  cyber: { bpm: 128, swing: 0.0, vol: 0.55 },
+  rock:  { bpm: 140, swing: 0.02, vol: 0.6 },
+  zen:   { bpm: 70,  swing: 0.0, vol: 0.4 },
 };
 
 function midiToFreq(midi: number): number {
@@ -149,7 +149,7 @@ function createMusicPlayer() {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(150, time);
     osc.frequency.exponentialRampToValueAtTime(30, time + 0.12);
-    gain.gain.setValueAtTime(0.9, time);
+    gain.gain.setValueAtTime(1.0, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
     osc.connect(gain);
     gain.connect(masterGain!);
@@ -169,14 +169,14 @@ function createMusicPlayer() {
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.5, time);
+    noiseGain.gain.setValueAtTime(0.7, time);
     noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
     // Tone body
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.value = 180;
     const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.35, time);
+    oscGain.gain.setValueAtTime(0.5, time);
     oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
     // Filter
     const filter = ctx.createBiquadFilter();
@@ -205,7 +205,7 @@ function createMusicPlayer() {
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(open ? 0.2 : 0.15, time);
+    gain.gain.setValueAtTime(open ? 0.35 : 0.25, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
     const filter = ctx.createBiquadFilter();
     filter.type = 'highpass';
@@ -223,7 +223,7 @@ function createMusicPlayer() {
     osc.type = 'sawtooth';
     osc.frequency.value = midiToFreq(note);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.25, time);
+    gain.gain.setValueAtTime(0.35, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -242,8 +242,8 @@ function createMusicPlayer() {
     osc.type = trackId === 'cyber' ? 'square' : trackId === 'rock' ? 'sawtooth' : 'sine';
     osc.frequency.value = midiToFreq(note);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(trackId === 'zen' ? 0.12 : 0.1, time);
-    gain.gain.setValueAtTime(trackId === 'zen' ? 0.12 : 0.1, time + 0.05);
+    gain.gain.setValueAtTime(trackId === 'zen' ? 0.2 : 0.18, time);
+    gain.gain.setValueAtTime(trackId === 'zen' ? 0.2 : 0.18, time + 0.05);
     gain.gain.exponentialRampToValueAtTime(0.001, time + (trackId === 'zen' ? 0.4 : 0.15));
     // Delay/echo for cyber
     if (trackId === 'cyber') {
