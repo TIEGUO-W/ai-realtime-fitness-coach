@@ -608,17 +608,33 @@ export class CoachSession {
 
   // ═══ TTS ═════════════════════════════════════
 
+  private consecutiveTtsFailures = 0;
+
   private async synthAndSend(text: string, priority: TtsPriority = 'medium'): Promise<void> {
     try {
       console.log('[CoachSession] synthAndSend 开始:', text.slice(0, 30));
+
+      // 连续失败超阈值 → 重建 TTSClient（会话/token 可能过期）
+      if (this.consecutiveTtsFailures >= 3) {
+        console.log('[CoachSession] 连续 TTS 失败 >= 3，重建 TTSClient');
+        this.ttsClient = null;
+        this.consecutiveTtsFailures = 0;
+      }
+
       const client = this.getTTSClient();
-      const result = await client.synthesize({
-        uid: 'coach-session',
-        text,
-        speaker: 'zh_female_xiaohe_uranus_bigtts',
-        speechRate: 2,
-      });
+      const result = await Promise.race([
+        client.synthesize({
+          uid: 'coach-session',
+          text,
+          speaker: 'zh_female_xiaohe_uranus_bigtts',
+          speechRate: 2,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('TTS synthesize timeout after 10s')), 10_000),
+        ),
+      ]);
       console.log('[CoachSession] synthAndSend 结果:', result.audioUri ? '成功 ' + result.audioUri.slice(0, 60) : '无 audioUri');
+      this.consecutiveTtsFailures = 0;
       if (result.audioUri) {
         this.send({
           type: 'tts_ready',
@@ -626,7 +642,8 @@ export class CoachSession {
         });
       }
     } catch (err) {
-      console.error('[CoachSession] TTS failed:', err);
+      this.consecutiveTtsFailures++;
+      console.error('[CoachSession] TTS failed (consecutive:', this.consecutiveTtsFailures, '):', err);
     }
   }
 
