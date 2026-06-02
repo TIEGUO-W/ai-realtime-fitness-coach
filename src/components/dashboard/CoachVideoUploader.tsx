@@ -100,7 +100,7 @@ export default function CoachVideoUploader({
 
             {!loading && videos.length === 0 && !error && (
               <p className="text-[10px] leading-relaxed text-white/25">
-                暂无预置视频。请把视频放到 public/uploads/coach-videos 后刷新页面。
+                暂无预置视频，请稍后再试。
               </p>
             )}
 
@@ -117,7 +117,7 @@ export default function CoachVideoUploader({
                     }`}
                   >
                     <Video className="h-3.5 w-3.5 shrink-0" />
-                    <span className="min-w-0 flex-1 truncate text-[10px] font-mono">{video.title}</span>
+                    <span className="min-w-0 flex-1 truncate text-[11px]">{video.title}</span>
                     {video.hasSkeleton && <span className="text-[9px] text-green-400/70">AI</span>}
                   </button>
                 ))}
