@@ -979,3 +979,78 @@ export class PoseAlgorithmEngine {
     ].join(' ');
   }
 }
+
+// ─── 跟练模式辅助：直接从 Landmark[] 计算 JointAngles ────
+
+/** 将 MediaPipe landmarks 数组映射到名称索引的简单关键点记录 */
+function lmToKp(landmarks: Landmark[]): Record<number, { x: number; y: number; conf: number }> {
+  const map: Record<number, { x: number; y: number; conf: number }> = {};
+  for (let i = 0; i < landmarks.length; i++) {
+    const lm = landmarks[i];
+    map[i] = { x: lm.x, y: lm.y, conf: lm.visibility ?? 1 };
+  }
+  return map;
+}
+
+/** 直接从 Landmark[] 计算所有关节角度，无需完整清洗流水线 */
+export function computeAnglesFromLandmarks(landmarks: Landmark[]): JointAngles {
+  const kp = lmToKp(landmarks);
+
+  const get = (idx: number): { x: number; y: number; valid: boolean; confidence: number; interpolated: boolean } | undefined => {
+    const p = kp[idx];
+    if (!p || p.conf < 0.3) return undefined;
+    return { x: p.x, y: p.y, valid: true, confidence: p.conf, interpolated: false };
+  };
+
+  // MediaPipe 索引: 11=左肩, 12=右肩, 13=左肘, 14=右肘, 15=左腕, 16=右腕
+  //                  23=左髋, 24=右髋, 25=左膝, 26=右膝, 27=左踝, 28=右踝
+  const leftShoulder = get(11), rightShoulder = get(12);
+  const leftElbow = get(13), rightElbow = get(14);
+  const leftWrist = get(15), rightWrist = get(16);
+  const leftHip = get(23), rightHip = get(24);
+  const leftKnee = get(25), rightKnee = get(26);
+  const leftAnkle = get(27), rightAnkle = get(28);
+
+  const leftKneeAngle = calcAngle(leftHip, leftKnee, leftAnkle);
+  const rightKneeAngle = calcAngle(rightHip, rightKnee, rightAnkle);
+  const leftHipAngle = calcAngle(leftShoulder, leftHip, leftKnee);
+  const rightHipAngle = calcAngle(rightShoulder, rightHip, rightKnee);
+  const leftElbowAngle = calcAngle(leftShoulder, leftElbow, leftWrist);
+  const rightElbowAngle = calcAngle(rightShoulder, rightElbow, rightWrist);
+  const leftShoulderAngle = calcAngle(leftElbow, leftShoulder, leftHip);
+  const rightShoulderAngle = calcAngle(rightElbow, rightShoulder, rightHip);
+
+  const kneeAngle = avgDefined(leftKneeAngle, rightKneeAngle);
+  const hipAngle = avgDefined(leftHipAngle, rightHipAngle);
+
+  // 躯干角度
+  const shoulderMid = midKP({ left_shoulder: leftShoulder as any, right_shoulder: rightShoulder as any } as any, 'shoulder');
+  const hipMid = midKP({ left_hip: leftHip as any, right_hip: rightHip as any } as any, 'hip');
+  const ankleMid = midKP({ left_ankle: leftAnkle as any, right_ankle: rightAnkle as any } as any, 'ankle');
+  const trunkAngle = calcAngle(shoulderMid as any, hipMid as any, ankleMid as any);
+  const bodyLineAngle = trunkAngle !== null ? 180 - trunkAngle : null;
+
+  // 躯干前倾
+  let trunkForwardLean: number | null = null;
+  if (isValid(shoulderMid as any) && isValid(hipMid as any)) {
+    trunkForwardLean = Math.atan(
+      Math.abs(shoulderMid!.x - hipMid!.x) / Math.max(0.001, Math.abs(shoulderMid!.y - hipMid!.y))
+    ) * (180 / Math.PI);
+  }
+
+  // 站距
+  let stanceWidth: number | null = null;
+  if (isValid(leftAnkle as any) && isValid(rightAnkle as any)) {
+    stanceWidth = Math.abs(leftAnkle!.x - rightAnkle!.x);
+  }
+
+  return {
+    kneeAngle: r2(kneeAngle), hipAngle: r2(hipAngle),
+    trunkAngle: r2(trunkAngle), trunkForwardLean: r2(trunkForwardLean),
+    leftKneeAngle: r2(leftKneeAngle), rightKneeAngle: r2(rightKneeAngle),
+    leftHipAngle: r2(leftHipAngle), rightHipAngle: r2(rightHipAngle),
+    leftElbowAngle: r2(leftElbowAngle), rightElbowAngle: r2(rightElbowAngle),
+    leftShoulderAngle: r2(leftShoulderAngle), rightShoulderAngle: r2(rightShoulderAngle),
+    bodyLineAngle: r2(bodyLineAngle), stanceWidth: r2(stanceWidth),
+  };
+}

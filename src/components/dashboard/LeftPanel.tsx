@@ -180,7 +180,7 @@ export default function LeftPanel({
   const pConfig = PERSONALITY_CONFIG[personality];
 
   return (
-    <div className="flex flex-col h-full bg-cyber-panel/40">
+    <div className="flex flex-col h-full bg-cyber-panel/40 min-h-0 overflow-y-auto">
       {/* ═══ Monster Zone ════════════════════════════ */}
       <div className="relative w-full aspect-square max-h-[320px] overflow-hidden">
         {splineLoading && (

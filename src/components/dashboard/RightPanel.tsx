@@ -23,6 +23,10 @@ interface RightPanelProps {
   poseDetected: boolean;
   modelReady: boolean;
   loadStage: string;
+  followAlongMode?: boolean;
+  matchQuality?: number;
+  coachVideoRef?: React.RefObject<HTMLVideoElement | null>;
+  coachVideoUrl?: string | null;
 }
 
 const EXERCISES = [
@@ -54,6 +58,10 @@ export default function RightPanel({
   poseDetected,
   modelReady,
   loadStage,
+  followAlongMode,
+  matchQuality,
+  coachVideoRef,
+  coachVideoUrl,
 }: RightPanelProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -79,6 +87,13 @@ export default function RightPanel({
           <span className="text-[10px] font-bold tracking-[0.2em] font-mono uppercase text-slate-400">
             {cs === 'connected' ? 'LIVE' : cs === 'connecting' ? 'SYNC' : 'OFFLINE'}
           </span>
+          {followAlongMode && matchQuality !== undefined && (
+            <span className={`text-[10px] font-bold tracking-[0.1em] font-mono uppercase ${
+              matchQuality >= 80 ? 'text-green-400' : matchQuality >= 50 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
+              匹配 {matchQuality}%
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -154,21 +169,33 @@ export default function RightPanel({
         <div className="absolute bottom-2 left-2 w-8 h-8 border-b border-l border-cyber-cyan/20 rounded-bl-md" />
         <div className="absolute bottom-2 right-2 w-8 h-8 border-b border-r border-cyber-cyan/20 rounded-br-md" />
 
-        {/* Video */}
+        {/* Coach video (follow-along mode) — shown on top, replaces camera view */}
+        {followAlongMode && coachVideoRef && coachVideoUrl && (
+          <video
+            ref={coachVideoRef}
+            src={coachVideoUrl}
+            className="absolute inset-0 w-full h-full object-contain bg-black z-10"
+            playsInline
+            autoPlay
+            loop
+          />
+        )}
+
+        {/* User camera — ALWAYS rendered (mirrored, hidden behind coach video in follow-along mode) */}
         <video
           ref={videoRef}
           className="absolute inset-0 w-full h-full object-cover"
           muted
           playsInline
           autoPlay
-          style={{ display: isRunning ? 'block' : 'none' }}
+          style={{ display: isRunning ? 'block' : 'none', transform: followAlongMode ? 'scaleX(-1)' : 'scaleX(-1)' }}
         />
 
-        {/* Skeleton canvas */}
+        {/* Skeleton canvas — works in both modes */}
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ display: isRunning ? 'block' : 'none' }}
+          className="absolute inset-0 w-full h-full pointer-events-none z-20"
+          style={{ display: (isRunning || followAlongMode) ? 'block' : 'none' }}
         />
 
         {/* Placeholder when not running */}
