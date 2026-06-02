@@ -64,6 +64,30 @@ export async function GET() {
     return NextResponse.json({ videos });
   } catch (err) {
     console.error('[presets] Failed to load from object storage:', err);
-    return NextResponse.json({ videos: [] });
+    // Fallback: try local filesystem (dev environment)
+    try {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const dir = path.join(process.cwd(), 'public', 'uploads', 'coach-videos');
+      const files = await fs.readdir(dir).catch(() => [] as string[]);
+      const mp4Files = files.filter(f => f.endsWith('.mp4') && !f.match(/^[0-9a-f]{8}-/));
+      if (mp4Files.length > 0) {
+        const localVideos = mp4Files.map(f => {
+          const noExt = f.replace(/\.mp4$/, '');
+          const shortId = noExt.replace(/_[a-f0-9]{8}$/, '');
+          return {
+            recordingId: shortId,
+            title: PRESET_TITLES[shortId] || shortId,
+            coachVideoUrl: `/uploads/coach-videos/${f}`,
+            hasSkeleton: false,
+          };
+        });
+        console.log('[presets] Fallback to local files:', localVideos.length);
+        return NextResponse.json({ videos: localVideos });
+      }
+    } catch (fallbackErr) {
+      console.error('[presets] Local fallback also failed:', fallbackErr);
+    }
+    return NextResponse.json({ videos: [], error: 'Failed to load preset videos from object storage' });
   }
 }
