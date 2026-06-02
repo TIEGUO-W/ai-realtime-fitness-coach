@@ -111,7 +111,8 @@ export default function LeftPanel({
         if (!splineRef.current) return;
         frame++;
         if (mouth && 'scale' in mouth) {
-          (mouth.scale as { y: number }).y = 1 + Math.sin(frame * 0.5) * 0.3;
+          // Slow, natural jaw movement: ~1.2s per open-close cycle at 60fps
+          (mouth.scale as { y: number }).y = 1 + Math.sin(frame * 0.08) * 0.25;
         }
         if (splineRef.current) requestAnimationFrame(animate);
       };
