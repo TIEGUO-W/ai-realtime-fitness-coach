@@ -984,7 +984,7 @@ export default function Dashboard() {
               setFollowAlongRecordingId(id);
               setCoachVideoUrl(url);
             }}
-            onStartFollowAlong={(id) => {
+            onStartFollowAlong={(id, url) => {
               // Auto-start workout + camera if not already running
               if (!isRunning) {
                 unlockMobileAudio();
@@ -1010,7 +1010,7 @@ export default function Dashboard() {
               }
               wsRef.current?.send({
                 type: 'start_follow_along',
-                payload: { recordingId: id },
+                payload: { recordingId: id, coachVideoUrl: url },
               });
             }}
             onStopFollowAlong={() => {

@@ -150,7 +150,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
     // ── 跟练模式：开始 ──────────────────────────
 
     if (msg.type === 'start_follow_along') {
-      const { recordingId } = msg.payload as { recordingId: string };
+      const { recordingId, coachVideoUrl } = msg.payload as { recordingId: string; coachVideoUrl?: string };
       try {
         followAlongEngine = new FollowAlongEngine();
         await followAlongEngine.loadCoachData(recordingId);
@@ -163,7 +163,7 @@ export function handleCoachingConnection(ws: WebSocket): void {
           type: 'follow_along_started',
           payload: {
             recordingId,
-            coachVideoUrl: `/uploads/coach-videos/${recordingId}.mp4`,
+            coachVideoUrl: coachVideoUrl || `/uploads/coach-videos/${recordingId}.mp4`,
             totalFrames: followAlongEngine.totalFrames,
             coachLandmarks: initialFrames.map(f => f.landmarks),
           },
@@ -173,8 +173,27 @@ export function handleCoachingConnection(ws: WebSocket): void {
         currentExercise = 'follow_along';
         console.log('[coaching] follow-along started:', recordingId);
       } catch (err) {
-        console.error('[coaching] failed to start follow-along:', err);
-        safeSend(ws, { type: 'error', payload: { message: '跟练数据加载失败，请确认视频已处理完成' } });
+        if (!coachVideoUrl) {
+          console.error('[coaching] failed to start follow-along:', err);
+          safeSend(ws, { type: 'error', payload: { message: '跟练数据加载失败，请确认视频已处理完成' } });
+          return;
+        }
+
+        followAlongEngine = null;
+        followAlongActive = false;
+        safeSend(ws, {
+          type: 'follow_along_started',
+          payload: {
+            recordingId,
+            coachVideoUrl,
+            totalFrames: 0,
+            coachLandmarks: [],
+          },
+        });
+        session.setExercise('follow_along');
+        session.setFollowAlongMode();
+        currentExercise = 'follow_along';
+        console.log('[coaching] preset follow-along video started without skeleton:', recordingId);
       }
       return;
     }
