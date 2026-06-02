@@ -5,6 +5,7 @@ import LeftPanel from './LeftPanel';
 import RightPanel, { EXERCISE_LABELS } from './RightPanel';
 import CustomPlanModal from './CustomPlanModal';
 import WorkoutSummaryModal from './WorkoutSummaryModal';
+import CoachVideoUploader from './CoachVideoUploader';
 import type { DashboardData, CoachPersonality, CoachVoice, Workout, Biometrics, ChatMessage } from '@/types/dashboard';
 import { mockData } from '@/data/mockData';
 
@@ -84,12 +85,49 @@ export default function Dashboard() {
   const frameBufferRef = useRef<Landmark[][]>([]);
   const pendingVoiceRef = useRef<string[]>([]);
   const lastFrameSentRef = useRef<number>(0);
+  const smoothedScoreRef = useRef<number>(50); // EMA 平滑分数，防止闪烁
 
   // Dashboard data derived from WS state
   const [data, setData] = useState<DashboardData>(() => ({
     ...mockData,
     workout: { ...mockData.workout, currentAction: '深蹲', targetReps: 0 },
   }));
+
+  // ─── Follow-along state ───────────────────────────────
+  const [followAlongMode, setFollowAlongMode] = useState(false);
+  const [followAlongRecordingId, setFollowAlongRecordingId] = useState<string | null>(null);
+  const [coachVideoUrl, setCoachVideoUrl] = useState<string | null>(null);
+  const [coachTotalFrames, setCoachTotalFrames] = useState(0);
+  const [currentCoachFrame, setCurrentCoachFrame] = useState<{
+    landmarks: Landmark[];
+    perJointStatus: Record<string, string>;
+  } | null>(null);
+  const [matchQuality, setMatchQuality] = useState(0);
+  const coachVideoRef = useRef<HTMLVideoElement>(null);
+  const coachCanvasRef = useRef<HTMLCanvasElement>(null);
+  const pipVideoRef = useRef<HTMLVideoElement>(null);
+  const coachPausedRef = useRef(false);
+
+  // Coach video pause/resume → tell server to stop/start talking
+  useEffect(() => {
+    const video = coachVideoRef.current;
+    if (!video) return;
+    const onPause = () => {
+      if (!coachPausedRef.current) {
+        coachPausedRef.current = true;
+        wsRef.current?.send({ type: 'pause_coaching', payload: {} });
+      }
+    };
+    const onPlay = () => {
+      if (coachPausedRef.current) {
+        coachPausedRef.current = false;
+        wsRef.current?.send({ type: 'resume_coaching', payload: {} });
+      }
+    };
+    video.addEventListener('pause', onPause);
+    video.addEventListener('play', onPlay);
+    return () => { video.removeEventListener('pause', onPause); video.removeEventListener('play', onPlay); };
+  }, [followAlongMode, coachVideoUrl]);
 
   // Speaking state for monster mouth animation
   // ─── TTS Playback Queue (Priority-aware) ──────────────
@@ -256,6 +294,10 @@ export default function Dashboard() {
         setDetectedExercise(p.exercise);
         setQuality(p.quality);
         if (p.effect) setExerciseEffect(p.effect);
+        // EMA 平滑分数，防止骨架抖动导致数字闪烁
+        const rawScore = p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40);
+        smoothedScoreRef.current = smoothedScoreRef.current + 0.15 * (rawScore - smoothedScoreRef.current);
+        const displayScore = Math.round(smoothedScoreRef.current);
         setData(prev => ({
           ...prev,
           workout: {
@@ -263,19 +305,23 @@ export default function Dashboard() {
             currentAction: EXERCISE_LABELS[p.exercise] || p.exercise || prev.workout.currentAction,
             reps: Math.max(prev.workout.reps, p.repCount),
             isFormDeformed: p.quality === 'error',
-            score: p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40),
+            score: displayScore,
           },
         }));
         break;
       }
       case 'rep_completed': {
         const p = msg.payload as AlgorithmUpdatePayload;
+        // 用 EMA 平滑，但完成动作时偏重本次分数
+        if (p.qualityScore != null) {
+          smoothedScoreRef.current = smoothedScoreRef.current + 0.3 * (p.qualityScore - smoothedScoreRef.current);
+        }
         setData(prev => ({
           ...prev,
           workout: {
             ...prev.workout,
             reps: Math.max(prev.workout.reps, p.repCount),
-            score: p.qualityScore ?? prev.workout.score,
+            score: Math.round(smoothedScoreRef.current),
           },
         }));
         break;
@@ -299,7 +345,9 @@ export default function Dashboard() {
             currentAction: EXERCISE_LABELS[fb.exercise] || fb.exercise || prev.workout.currentAction,
             reps: Math.max(prev.workout.reps, fb.repCount),
             isFormDeformed: fb.quality === 'error',
-            score: fb.qualityScore ?? prev.workout.score,
+            score: fb.qualityScore != null
+              ? Math.round(smoothedScoreRef.current = smoothedScoreRef.current + 0.3 * (fb.qualityScore - smoothedScoreRef.current))
+              : prev.workout.score,
           },
           assistant: {
             message: coachMsg || prev.assistant.message,
@@ -361,6 +409,53 @@ export default function Dashboard() {
         if (hrPayload.heartRate) {
           setRealHeartRate(hrPayload.heartRate);
         }
+        break;
+      }
+      // ── 跟练模式 ──────────────────────────────────
+      case 'follow_along_started': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as any;
+        setFollowAlongMode(true);
+        setFollowAlongRecordingId(p.recordingId);
+        setCoachVideoUrl(p.coachVideoUrl);
+        setCoachTotalFrames(p.totalFrames);
+        setMatchQuality(100);
+        // Start coach video playback
+        setTimeout(() => {
+          coachVideoRef.current?.play().catch(() => {});
+        }, 100);
+        break;
+      }
+      case 'comparison_update': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as any;
+        setMatchQuality(p.matchQuality ?? 0);
+        setData(prev => ({
+          ...prev,
+          workout: {
+            ...prev.workout,
+            score: p.userScore != null
+              ? Math.round(smoothedScoreRef.current = smoothedScoreRef.current + 0.15 * (p.userScore - smoothedScoreRef.current))
+              : prev.workout.score,
+          },
+        }));
+        break;
+      }
+      case 'coach_frame': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = msg.payload as any;
+        setCurrentCoachFrame({
+          landmarks: p.landmarks,
+          perJointStatus: p.perJointStatus || {},
+        });
+        break;
+      }
+      case 'follow_along_ended': {
+        setFollowAlongMode(false);
+        setFollowAlongRecordingId(null);
+        setCoachVideoUrl(null);
+        setCurrentCoachFrame(null);
+        setMatchQuality(0);
         break;
       }
     }
@@ -465,6 +560,10 @@ export default function Dashboard() {
           await video.play();
           cameraRef.current = stream;
         }
+        // Also set stream on PIP video for follow-along mode
+        if (pipVideoRef.current) {
+          pipVideoRef.current.srcObject = stream;
+        }
         await initMediaPipe();
       } catch (err) {
         if (!cancelled) {
@@ -527,58 +626,92 @@ export default function Dashboard() {
         if (result.landmarks && result.landmarks.length > 0) {
           setPoseDetected(true);
           const lm = result.landmarks[0];
-          const color = getSkeletonColor(quality);
 
-          // ── 外层光晕 ──
-          ctx.save();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 3;
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 15;
-          ctx.globalAlpha = 0.6;
-          ctx.lineCap = 'round';
-          for (const [i, j] of POSE_CONNECTIONS) {
-            if (i < lm.length && j < lm.length) {
-              ctx.beginPath();
-              ctx.moveTo(lm[i].x * canvas.width, lm[i].y * canvas.height);
-              ctx.lineTo(lm[j].x * canvas.width, lm[j].y * canvas.height);
-              ctx.stroke();
+          // ── 用户骨架（仅非跟练模式） ──
+          if (!followAlongMode) {
+            const color = getSkeletonColor(quality);
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 15;
+            ctx.globalAlpha = 0.6;
+            ctx.lineCap = 'round';
+            for (const [i, j] of POSE_CONNECTIONS) {
+              if (i < lm.length && j < lm.length) {
+                ctx.beginPath();
+                ctx.moveTo(lm[i].x * canvas.width, lm[i].y * canvas.height);
+                ctx.lineTo(lm[j].x * canvas.width, lm[j].y * canvas.height);
+                ctx.stroke();
+              }
             }
-          }
-
-          // ── 内层主线 ──
-          ctx.globalAlpha = 1;
-          ctx.lineWidth = 1.5;
-          ctx.shadowBlur = 6;
-          for (const [i, j] of POSE_CONNECTIONS) {
-            if (i < lm.length && j < lm.length) {
-              ctx.beginPath();
-              ctx.moveTo(lm[i].x * canvas.width, lm[i].y * canvas.height);
-              ctx.lineTo(lm[j].x * canvas.width, lm[j].y * canvas.height);
-              ctx.stroke();
-            }
-          }
-
-          // ── 关节点：发光环 + 实心 + 高光 ──
-          ctx.shadowBlur = 12;
-          for (const point of lm) {
-            const x = point.x * canvas.width, y = point.y * canvas.height;
-            ctx.beginPath();
-            ctx.arc(x, y, 6, 0, 2 * Math.PI);
-            ctx.fillStyle = color;
-            ctx.globalAlpha = 0.3;
-            ctx.fill();
             ctx.globalAlpha = 1;
-            ctx.beginPath();
-            ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x - 0.7, y - 0.7, 1.2, 0, 2 * Math.PI);
-            ctx.fillStyle = 'rgba(255,255,255,0.6)';
-            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.shadowBlur = 6;
+            for (const [i, j] of POSE_CONNECTIONS) {
+              if (i < lm.length && j < lm.length) {
+                ctx.beginPath();
+                ctx.moveTo(lm[i].x * canvas.width, lm[i].y * canvas.height);
+                ctx.lineTo(lm[j].x * canvas.width, lm[j].y * canvas.height);
+                ctx.stroke();
+              }
+            }
+            ctx.shadowBlur = 12;
+            for (const point of lm) {
+              const x = point.x * canvas.width, y = point.y * canvas.height;
+              ctx.beginPath();
+              ctx.arc(x, y, 6, 0, 2 * Math.PI);
+              ctx.fillStyle = color;
+              ctx.globalAlpha = 0.3;
+              ctx.fill();
+              ctx.globalAlpha = 1;
+              ctx.beginPath();
+              ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
+              ctx.fillStyle = color;
+              ctx.fill();
+              ctx.beginPath();
+              ctx.arc(x - 0.7, y - 0.7, 1.2, 0, 2 * Math.PI);
+              ctx.fillStyle = 'rgba(255,255,255,0.6)';
+              ctx.fill();
+            }
+            ctx.restore();
           }
-          ctx.restore();
+
+          // ── 跟练模式：只绘制教练骨架（青色），不绘制用户骨架 ──
+          if (followAlongMode) {
+            // Clear user skeleton — don't draw it over coach video
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+          if (followAlongMode && currentCoachFrame) {
+            const coachLm = currentCoachFrame.landmarks;
+            const coachColor = '#00E5FF';
+            ctx.save();
+            ctx.strokeStyle = coachColor;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = coachColor;
+            ctx.shadowBlur = 8;
+            ctx.globalAlpha = 0.7;
+            ctx.lineCap = 'round';
+            for (const [i, j] of POSE_CONNECTIONS) {
+              if (i < coachLm.length && j < coachLm.length) {
+                ctx.beginPath();
+                ctx.moveTo(coachLm[i].x * canvas.width, coachLm[i].y * canvas.height);
+                ctx.lineTo(coachLm[j].x * canvas.width, coachLm[j].y * canvas.height);
+                ctx.stroke();
+              }
+            }
+            // Coach joints
+            ctx.shadowBlur = 6;
+            for (const point of coachLm) {
+              const x = point.x * canvas.width, y = point.y * canvas.height;
+              ctx.beginPath();
+              ctx.arc(x, y, 3, 0, 2 * Math.PI);
+              ctx.fillStyle = coachColor;
+              ctx.globalAlpha = 0.4;
+              ctx.fill();
+            }
+            ctx.restore();
+          }
 
           // Send as pose_frame for real-time coaching + TTS
           const wsLandmarks: Landmark[] = lm.map((p: { x: number; y: number; z: number; visibility?: number }) => ({
@@ -726,6 +859,7 @@ export default function Dashboard() {
   const completedRef = useRef(false);
 
   useEffect(() => {
+    if (followAlongMode) return; // No confetti in follow-along mode
     const prev = prevScoreRef.current;
     const curr = data.workout.score;
     prevScoreRef.current = curr;
@@ -733,9 +867,10 @@ export default function Dashboard() {
       if (curr > 85) triggerHighScore();
       else if (curr < 60) triggerLowScore();
     }
-  }, [data.workout.score]);
+  }, [data.workout.score, followAlongMode]);
 
   useEffect(() => {
+    if (followAlongMode) return; // No confetti in follow-along mode
     const curr = data.workout.reps;
     const prev = prevRepsRef.current;
     prevRepsRef.current = curr;
@@ -786,6 +921,7 @@ export default function Dashboard() {
     sessionIdRef.current = healthSid || `session_${Date.now()}`;
     startTimeRef.current = Date.now();
     completedRef.current = false;
+    smoothedScoreRef.current = 50;
     setRepCount(0);
     setIsRunning(true);
     setData(prev => ({
@@ -831,7 +967,52 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen w-full bg-cyber-dark scanlines overflow-hidden" onClick={handleDashboardClick}>
       {/* LEFT: AI Coach Panel */}
-      <div className="w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.03]">
+      <div className="w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.03] h-screen">
+        {/* Follow-along upload — fixed at top */}
+        <div className="px-4 pt-4 pb-2 flex-shrink-0">
+          <CoachVideoUploader
+            onUploadComplete={(id, url) => {
+              setFollowAlongRecordingId(id);
+              setCoachVideoUrl(url);
+            }}
+            onStartFollowAlong={(id) => {
+              // Auto-start workout + camera if not already running
+              if (!isRunning) {
+                unlockMobileAudio();
+                const healthSid = typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null;
+                sessionIdRef.current = healthSid || `session_${Date.now()}`;
+                startTimeRef.current = Date.now();
+                completedRef.current = false;
+                smoothedScoreRef.current = 50;
+                setRepCount(0);
+                setIsRunning(true);
+                setData(prev => ({
+                  ...prev,
+                  workout: { ...prev.workout, reps: 0, currentAction: EXERCISE_LABELS[selectedExercise] || selectedExercise },
+                }));
+                wsRef.current?.send({
+                  type: 'set_session',
+                  payload: { sessionId: sessionIdRef.current },
+                });
+                wsRef.current?.send({
+                  type: 'set_exercise',
+                  payload: { exercise: selectedExercise },
+                });
+              }
+              wsRef.current?.send({
+                type: 'start_follow_along',
+                payload: { recordingId: id },
+              });
+            }}
+            onStopFollowAlong={() => {
+              wsRef.current?.send({
+                type: 'stop_follow_along',
+                payload: {},
+              });
+            }}
+            followAlongActive={followAlongMode}
+          />
+        </div>
         <LeftPanel
           data={{ ...data, biometrics: { ...data.biometrics, heartRate: realHeartRate ?? data.biometrics.heartRate } }}
           personality={personality}
@@ -868,6 +1049,11 @@ export default function Dashboard() {
           poseDetected={poseDetected}
           modelReady={modelReady}
           loadStage={loadStage}
+          followAlongMode={followAlongMode}
+          matchQuality={matchQuality}
+          coachVideoRef={coachVideoRef}
+          coachVideoUrl={coachVideoUrl}
+          pipVideoRef={pipVideoRef}
         />
       </div>
 

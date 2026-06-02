@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import StatsRow from './StatsRow';
 import type { Workout, Biometrics, Environment } from '@/types/dashboard';
 
@@ -23,6 +23,11 @@ interface RightPanelProps {
   poseDetected: boolean;
   modelReady: boolean;
   loadStage: string;
+  followAlongMode?: boolean;
+  matchQuality?: number;
+  coachVideoRef?: React.RefObject<HTMLVideoElement | null>;
+  coachVideoUrl?: string | null;
+  pipVideoRef?: React.RefObject<HTMLVideoElement | null>;
 }
 
 const EXERCISES = [
@@ -54,11 +59,45 @@ export default function RightPanel({
   poseDetected,
   modelReady,
   loadStage,
+  followAlongMode,
+  matchQuality,
+  coachVideoRef,
+  coachVideoUrl,
+  pipVideoRef,
 }: RightPanelProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localCanvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = externalVideoRef ?? localVideoRef;
   const canvasRef = externalCanvasRef ?? localCanvasRef;
+
+  // ─── PIP resize ───────────────────────────────────────
+  const [pipWidth, setPipWidth] = useState(160);
+  const resizeRef = useRef<{ startX: number; startY: number; startWidth: number } | null>(null);
+
+  const handlePipResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, startWidth: pipWidth };
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const dx = resizeRef.current.startX - ev.clientX;
+      const dy = resizeRef.current.startY - ev.clientY;
+      // Use the larger delta (diagonal drag), clamped
+      const delta = Math.max(dx, dy);
+      const newWidth = Math.max(100, Math.min(400, resizeRef.current.startWidth + delta));
+      setPipWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      resizeRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [pipWidth]);
 
   const cs = environment.connectionStatus;
 
@@ -79,6 +118,13 @@ export default function RightPanel({
           <span className="text-[10px] font-bold tracking-[0.2em] font-mono uppercase text-slate-400">
             {cs === 'connected' ? 'LIVE' : cs === 'connecting' ? 'SYNC' : 'OFFLINE'}
           </span>
+          {followAlongMode && matchQuality !== undefined && (
+            <span className={`text-[10px] font-bold tracking-[0.1em] font-mono uppercase ${
+              matchQuality >= 80 ? 'text-green-400' : matchQuality >= 50 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
+              匹配 {matchQuality}%
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -154,22 +200,72 @@ export default function RightPanel({
         <div className="absolute bottom-2 left-2 w-8 h-8 border-b border-l border-cyber-cyan/20 rounded-bl-md" />
         <div className="absolute bottom-2 right-2 w-8 h-8 border-b border-r border-cyber-cyan/20 rounded-br-md" />
 
-        {/* Video */}
+        {/* Coach video (follow-along mode) — shown on top, replaces camera view */}
+        {followAlongMode && coachVideoRef && coachVideoUrl && (
+          <video
+            ref={coachVideoRef}
+            src={coachVideoUrl}
+            className="absolute inset-0 w-full h-full object-contain bg-black z-10"
+            playsInline
+            autoPlay
+            loop
+          />
+        )}
+
+        {/* User camera — ALWAYS rendered (mirrored, hidden behind coach video in follow-along mode) */}
         <video
           ref={videoRef}
           className="absolute inset-0 w-full h-full object-cover"
           muted
           playsInline
           autoPlay
-          style={{ display: isRunning ? 'block' : 'none' }}
+          style={{ display: isRunning ? 'block' : 'none', transform: followAlongMode ? 'scaleX(-1)' : 'scaleX(-1)' }}
         />
 
-        {/* Skeleton canvas */}
+        {/* Skeleton canvas — works in both modes */}
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ display: isRunning ? 'block' : 'none' }}
+          className="absolute inset-0 w-full h-full pointer-events-none z-20"
+          style={{ display: (isRunning || followAlongMode) ? 'block' : 'none' }}
         />
+
+        {/* PIP: user camera in corner during follow-along (resizable) */}
+        {followAlongMode && isRunning && pipVideoRef && (
+          <div
+            className="absolute bottom-3 right-3 rounded-lg overflow-hidden border border-cyber-cyan/20 shadow-lg shadow-black/50 z-30"
+            style={{ width: pipWidth }}
+          >
+            {/* Resize handle — top-left corner */}
+            <div
+              className="absolute top-0 left-0 w-4 h-4 cursor-nw-resize z-40 group"
+              onMouseDown={handlePipResizeStart}
+            >
+              {/* Diagonal grip lines */}
+              <svg
+                className="absolute top-0.5 left-0.5 opacity-40 group-hover:opacity-90 transition-opacity"
+                width="10" height="10" viewBox="0 0 10 10"
+              >
+                <line x1="8" y1="2" x2="2" y2="8" stroke="#00E5FF" strokeWidth="1" />
+                <line x1="6" y1="2" x2="2" y2="6" stroke="#00E5FF" strokeWidth="0.8" />
+                <line x1="9" y1="2" x2="2" y2="9" stroke="#00E5FF" strokeWidth="0.6" />
+              </svg>
+            </div>
+            {/* Header bar */}
+            <div className="bg-black/60 px-1.5 py-0.5 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyber-cyan animate-pulse" />
+              <span className="text-[8px] font-mono text-cyber-cyan/60 uppercase">你</span>
+              <span className="ml-auto text-[8px] text-slate-600 font-mono">{pipWidth}px</span>
+            </div>
+            <video
+              ref={pipVideoRef}
+              className="w-full aspect-[4/3] object-cover"
+              muted
+              playsInline
+              autoPlay
+              style={{ transform: 'scaleX(-1)' }}
+            />
+          </div>
+        )}
 
         {/* Placeholder when not running */}
         {!isRunning && (

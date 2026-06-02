@@ -113,8 +113,15 @@ export class CoachSession {
 
   // ═══ 公开输入方法 ═══════════════════════════════
 
+  /** 仅更新时间戳，不触发任何说话逻辑（跟练模式用） */
+  touch(): void {
+    if (this.paused) return;
+    this.lastActivityTime = Date.now();
+  }
+
   /** 骨架观察 — 全程同步，不阻塞 */
   observePose(result: AlgorithmResult): void {
+    if (this.paused) return;
     this.lastAlgorithmResult = result;
     this.lastActivityTime = Date.now();
 
@@ -185,6 +192,7 @@ export class CoachSession {
 
   /** 定时器触发 */
   onTimer(type: 'idle' | 'periodic'): void {
+    if (this.paused) return;
     if (type === 'idle') {
       this.personality.updateMood({
         consecutivePerfect: 0, isMilestone: false, isDanger: false,
@@ -321,6 +329,32 @@ export class CoachSession {
 
   getStats(): SessionStats {
     return { ...this.sessionStats };
+  }
+
+  private paused = false;
+
+  pause(): void {
+    this.paused = true;
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.ttsQueue.clear();
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.lastActivityTime = Date.now();
+    this.lastSpeechTime = Date.now();
+    this.startTimers();
+  }
+
+  setFollowAlongMode(): void {
+    // 跟练模式：降低说话频率，减少骚扰
+    this.config.speechCooldownMs = 10_000;  // 10秒冷却
+    this.config.idleThresholdMs = 15_000;   // 15秒不动才算空闲
+  }
+
+  sayOnce(text: string): void {
+    this.lastSpeechTime = Date.now();
+    this.ttsQueue.enqueue(text, 'high');
   }
 
   destroy(): void {
@@ -608,25 +642,107 @@ export class CoachSession {
 
   // ═══ TTS ═════════════════════════════════════
 
+  private consecutiveTtsFailures = 0;
+
   private async synthAndSend(text: string, priority: TtsPriority = 'medium'): Promise<void> {
     try {
       console.log('[CoachSession] synthAndSend 开始:', text.slice(0, 30));
-      const client = this.getTTSClient();
-      const result = await client.synthesize({
-        uid: 'coach-session',
-        text,
-        speaker: 'zh_female_xiaohe_uranus_bigtts',
-        speechRate: 2,
-      });
-      console.log('[CoachSession] synthAndSend 结果:', result.audioUri ? '成功 ' + result.audioUri.slice(0, 60) : '无 audioUri');
-      if (result.audioUri) {
+
+      let audioUrl: string | null = null;
+
+      // 优先用 SDK TTSClient（需要 COZE_WORKLOAD_IDENTITY_API_KEY）
+      if (!this.ttsClient || this.consecutiveTtsFailures < 3) {
+        try {
+          const client = this.getTTSClient();
+          const result = await Promise.race([
+            client.synthesize({
+              uid: 'coach-session',
+              text,
+              speaker: 'zh_female_xiaohe_uranus_bigtts',
+              speechRate: 2,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('TTS synthesize timeout after 10s')), 10_000),
+            ),
+          ]);
+          audioUrl = result.audioUri || null;
+          this.consecutiveTtsFailures = 0;
+        } catch (sdkErr) {
+          this.consecutiveTtsFailures++;
+          console.log('[CoachSession] SDK TTS failed, trying Doubao bot fallback:', String(sdkErr).slice(0, 80));
+        }
+      }
+
+      // 降级 1：调用豆包语音智能体 Bot（无需 API Key）
+      if (!audioUrl) {
+        try {
+          const botUrl = process.env.DOUBAO_VOICE_BOT_URL || 'https://320a02f4-5fad-4816-a1a8-37c1a4a92247.dev.coze.site/run';
+          const botRes = await Promise.race([
+            fetch(botUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: [{
+                  role: 'user',
+                  content: `请一字不差地朗读以下文字，不要添加任何解释、评论或额外内容，只需原样读出：${text}`,
+                }],
+              }),
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Doubao bot timeout')), 10_000),
+            ),
+          ]);
+          if (botRes.ok) {
+            const data = await botRes.json() as {
+              messages: Array<{ type: string; content: string; name?: string }>;
+            };
+            for (const msg of data.messages) {
+              if (msg.type === 'tool' && msg.name === 'synthesize_speech' && msg.content) {
+                audioUrl = msg.content.trim();
+                break;
+              }
+            }
+          }
+          this.consecutiveTtsFailures = 0;
+        } catch (botErr) {
+          console.error('[CoachSession] Doubao bot fallback failed:', String(botErr).slice(0, 80));
+        }
+      }
+
+      // 降级 2：本地 edge-tts（微软免费中文语音，无需任何 API Key）
+      if (!audioUrl) {
+        try {
+          const localRes = await Promise.race([
+            fetch(`http://127.0.0.1:${process.env.PORT || 5000}/api/tts-local`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text }),
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('local TTS timeout')), 15_000),
+            ),
+          ]);
+          if (localRes.ok) {
+            const data = await localRes.json() as { audioUrl: string };
+            if (data.audioUrl) {
+              audioUrl = data.audioUrl;
+            }
+          }
+        } catch (localErr) {
+          console.error('[CoachSession] local TTS fallback failed:', String(localErr).slice(0, 80));
+        }
+      }
+
+      console.log('[CoachSession] synthAndSend 结果:', audioUrl ? '成功 ' + audioUrl.slice(0, 60) : '无 audioUrl');
+      if (audioUrl) {
         this.send({
           type: 'tts_ready',
-          payload: { audioUrl: result.audioUri, text, priority },
+          payload: { audioUrl, text, priority },
         });
       }
     } catch (err) {
-      console.error('[CoachSession] TTS failed:', err);
+      this.consecutiveTtsFailures++;
+      console.error('[CoachSession] TTS failed (consecutive:', this.consecutiveTtsFailures, '):', err);
     }
   }
 

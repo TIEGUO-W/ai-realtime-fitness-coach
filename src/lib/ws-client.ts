@@ -73,6 +73,31 @@ export interface HeartRatePayload {
   timestamp: number;
 }
 
+// ─── 跟练模式消息 ────────────────────────────────
+
+export interface StartFollowAlongPayload {
+  recordingId: string;
+  coachVideoUrl: string;
+  totalFrames: number;
+  coachLandmarks: Landmark[][];
+}
+
+export interface ComparisonUpdatePayload {
+  matchQuality: number;
+  angleDiffs: Record<string, number>;
+  coachFrameIndex: number;
+  userScore: number;
+  coachAngles: Record<string, number | null>;
+  followed: boolean;
+  perJointStatus: Record<string, 'good' | 'adjust' | 'correct'>;
+}
+
+export interface CoachFramePayload {
+  frameIndex: number;
+  landmarks: Landmark[];
+  perJointStatus: Record<string, string>;
+}
+
 // ─── WebSocket 客户端工具 ───────────────────────
 
 interface WsOptions {

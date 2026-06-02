@@ -14,6 +14,9 @@ import { CoachSession } from './coach-session';
 import { parseVoiceCommand } from './voice-command';
 import { ASRClient, Config } from 'coze-coding-dev-sdk';
 import { onHeartRate } from '../lib/health-store';
+import { FollowAlongEngine } from './follow-along-engine';
+import type { AlgorithmResult } from './pose-algorithm';
+import { generateFollowCoaching } from './coaching-templates';
 
 const ALGORITHM_INTERVAL_MS = 100; // 算法推送 ~10fps
 
@@ -48,6 +51,14 @@ export function handleCoachingConnection(ws: WebSocket): void {
   let currentExercise = 'squat';
   let lastAlgorithmPush = 0;
   let healthSessionId = '';
+
+  // Follow-along mode state
+  let followAlongEngine: FollowAlongEngine | null = null;
+  let followAlongActive = false;
+  let userFrameCounter = 0;
+  let lastComparisonPush = 0;
+  let lastFollowCorrectionTime = 0;
+  let lowMatchStreak = 0;
 
   // Listen for Apple Health heart rate updates — push to ALL connected dashboards
   const hrHandler = (data: { sessionId: string; heartRate: number }) => {
@@ -135,6 +146,65 @@ export function handleCoachingConnection(ws: WebSocket): void {
       return;
     }
 
+    // ── 跟练模式：开始 ──────────────────────────
+
+    if (msg.type === 'start_follow_along') {
+      const { recordingId } = msg.payload as { recordingId: string };
+      try {
+        followAlongEngine = new FollowAlongEngine();
+        await followAlongEngine.loadCoachData(recordingId);
+        followAlongActive = true;
+        userFrameCounter = 0;
+        algorithm.reset();
+
+        const initialFrames = followAlongEngine.getInitialFrames(5);
+        safeSend(ws, {
+          type: 'follow_along_started',
+          payload: {
+            recordingId,
+            coachVideoUrl: `/uploads/coach-videos/${recordingId}.mp4`,
+            totalFrames: followAlongEngine.totalFrames,
+            coachLandmarks: initialFrames.map(f => f.landmarks),
+          },
+        });
+        session.setExercise('follow_along');
+        session.setFollowAlongMode();
+        currentExercise = 'follow_along';
+        console.log('[coaching] follow-along started:', recordingId);
+      } catch (err) {
+        console.error('[coaching] failed to start follow-along:', err);
+        safeSend(ws, { type: 'error', payload: { message: '跟练数据加载失败，请确认视频已处理完成' } });
+      }
+      return;
+    }
+
+    // ── 暂停教练说话 ──────────────────────────
+    if (msg.type === 'pause_coaching') {
+      session.pause();
+      safeSend(ws, { type: 'voice_reply', payload: { text: '已暂停', audioUrl: null } });
+      // Say "已暂停" once
+      const pauseText = '已暂停，休息一下吧';
+      session.sayOnce(pauseText);
+      return;
+    }
+
+    if (msg.type === 'resume_coaching') {
+      session.resume();
+      safeSend(ws, { type: 'voice_reply', payload: { text: '继续！', audioUrl: null } });
+      return;
+    }
+
+    // ── 跟练模式：停止 ──────────────────────────
+
+    if (msg.type === 'stop_follow_along') {
+      followAlongActive = false;
+      followAlongEngine = null;
+      userFrameCounter = 0;
+      safeSend(ws, { type: 'follow_along_ended', payload: {} });
+      console.log('[coaching] follow-along stopped');
+      return;
+    }
+
     // ── 骨架帧 ────────────────────────────────
 
     if (msg.type === 'pose_frame') {
@@ -173,6 +243,72 @@ export function handleCoachingConnection(ws: WebSocket): void {
         });
       }
 
+      // ── 跟练模式：对比引擎 ──────────────────
+      if (followAlongActive && followAlongEngine) {
+        userFrameCounter++;
+        const comparison = followAlongEngine.compareFrame(frame.landmarks, userFrameCounter);
+
+        if (now - lastComparisonPush >= ALGORITHM_INTERVAL_MS) {
+          lastComparisonPush = now;
+          safeSend(ws, {
+            type: 'comparison_update',
+            payload: {
+              matchQuality: comparison.matchQuality,
+              angleDiffs: comparison.angleDiffs,
+              coachFrameIndex: comparison.coachFrameIndex,
+              userScore: comparison.matchQuality,
+              coachAngles: comparison.coachAngles,
+              followed: comparison.followed,
+              perJointStatus: comparison.perJointStatus,
+            },
+          });
+        }
+
+        // 推送教练帧给前端渲染
+        const coachFrame = followAlongEngine.getCoachFrame(comparison.coachFrameIndex);
+        if (coachFrame) {
+          safeSend(ws, {
+            type: 'coach_frame',
+            payload: {
+              frameIndex: comparison.coachFrameIndex,
+              landmarks: coachFrame.landmarks,
+              perJointStatus: comparison.perJointStatus,
+            },
+          });
+        }
+
+        // 偏差大时注入 CoachSession 触发 TTS（有冷却，避免轰炸）
+        if (!comparison.followed && comparison.matchQuality < 50) {
+          lowMatchStreak++;
+        } else {
+          lowMatchStreak = 0;
+        }
+
+        const now2 = Date.now();
+        // 跟练模式：只更新活动时间（防止 idle 误触发），不说话
+        // 只在对比发现真正偏差时才触发纠正
+        session.touch(); // 仅更新时间戳，不触发 shouldSpeak
+
+        // 偏差足够大 + 足够久才说一次
+        if (lowMatchStreak >= 15 && now2 - lastFollowCorrectionTime > 12000) {
+          lastFollowCorrectionTime = now2;
+          lowMatchStreak = 0;
+          const followText = generateFollowCoaching(comparison.perJointStatus, comparison.matchQuality);
+          if (followText) {
+            const correctionResult: AlgorithmResult = {
+              ...result,
+              quality: {
+                qualityScore: Math.min(result.quality.qualityScore, comparison.matchQuality),
+                errors: [followText],
+                warnings: result.quality.warnings,
+              },
+            };
+            session.observePose(correctionResult);
+          }
+        }
+        return;
+      }
+
       // 委托给 CoachSession（智能插话决策 + 模板话术 + TTS）
       session.observePose(result);
       return;
@@ -199,6 +335,9 @@ export function handleCoachingConnection(ws: WebSocket): void {
     algorithm.reset();
     session.destroy();
     unsubHeartRate();
+    followAlongEngine = null;
+    followAlongActive = false;
+    userFrameCounter = 0;
   });
 }
 

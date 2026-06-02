@@ -62,7 +62,11 @@ export class TTSQueue {
   private speakNow(text: string, priority: TtsPriority): void {
     console.log(`[TTSQueue] speakNow: priority=${priority}, text="${text.slice(0, 30)}"`);
     this.isSpeaking = true;
-    Promise.resolve(this.onSpeak?.(text, priority))
+    const handler = this.onSpeak?.(text, priority);
+    const timeout = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('TTS handler timeout after 15s')), 15_000),
+    );
+    Promise.race([handler ?? Promise.resolve(), timeout])
       .catch((err) => { console.error('[TTSQueue] speakNow error:', err); })
       .finally(() => {
         this.isSpeaking = false;

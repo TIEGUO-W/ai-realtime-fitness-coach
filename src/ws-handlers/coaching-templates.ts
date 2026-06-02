@@ -232,6 +232,27 @@ const highKneeTemplates: CoachingTemplates = {
 };
 
 // ============ 运动模板映射 ============
+const followAlongTemplates: CoachingTemplates = {
+  milestones: {
+    5: ['节奏不错！跟上教练的步伐', '五组了！继续保持', '渐入佳境！就这样'],
+    10: ['已经十组了！燃起来了', '非常好，你已经找到感觉了'],
+    20: ['状态太好了！你已经完成了20组'],
+    50: ['五！十！组！太强了！'],
+  },
+  byQuality: {
+    perfect: ['完美同步！你比教练还标准', '动作简直一模一样！', '这同步率，满分！'],
+    good: ['跟得不错！', '节奏掌握得很好', '动作很到位，继续保持'],
+    adjust: ['手臂再抬高一点', '注意腿的幅度', '胯部动作再大一些', '看看教练的节奏'],
+    warning: ['动作慢下来了，跟上！', '注意手臂位置', '腿部幅度不太对'],
+    error: ['停一下，看教练怎么做', '动作偏差太大了，先放慢'],
+  },
+  byStage: {
+    up: [], down: [], hold: [], transition: [],
+  },
+  idle: ['怎么停下来了？继续跳！', '别偷懒，教练还在跳呢', '喂！教练看了你一眼'],
+  warmup: ['准备好开始跟练了吗？', '跟着教练一起！', '来，眼睛看屏幕，身体动起来！'],
+};
+
 const EXERCISE_TEMPLATES: Record<string, CoachingTemplates> = {
   squat: squatTemplates,
   deadlift: deadliftTemplates,
@@ -242,6 +263,7 @@ const EXERCISE_TEMPLATES: Record<string, CoachingTemplates> = {
   high_knee: highKneeTemplates,
   high_knees: highKneeTemplates,
   jumping_jack: jumpingJackTemplates,
+  follow_along: followAlongTemplates,
 };
 
 // 运动中文名
@@ -326,6 +348,64 @@ export function generateIdleCoaching(): string {
 export function generateWarmupCoaching(exercise: string): string {
   const templates = EXERCISE_TEMPLATES[exercise] || commonTemplates;
   return pickRandom(templates.warmup || commonTemplates.warmup);
+}
+
+// ─── 跟练模式话术 ──────────────────────────────
+
+const FOLLOW_TEMPLATES = {
+  good: [
+    '跟得漂亮！动作很到位',
+    '节奏感不错，继续保持',
+    '就是这个感觉！动作很标准',
+    '很好，和教练几乎同步',
+  ],
+  adjust: [
+    '手臂再抬高一点',
+    '注意看教练，动作幅度再大些',
+    '腿再张开一点，跟上节奏',
+    '腰挺直，别偷懒',
+    '动作稍微快一点，跟上节拍',
+    '肩膀放松，别太僵硬',
+    '手的位置注意一下，和教练对齐',
+  ],
+  correct: [
+    '停一下，你这个动作偏差有点大',
+    '先看教练怎么做，然后再跟',
+    '慢一点，先把动作做对再加速',
+    '注意看屏幕，和教练对比一下',
+  ],
+  encouragement: [
+    '燃起来了！',
+    '快跟上，别掉队！',
+    '汗出来了没？这才到哪！',
+    '跳起来，别站着不动！',
+  ],
+};
+
+export function generateFollowCoaching(
+  jointStatus: Record<string, 'good' | 'adjust' | 'correct'>,
+  matchQuality: number,
+): string | null {
+  const worst = Object.entries(jointStatus)
+    .filter(([, s]) => s !== 'good')
+    .sort(([, a], [, b]) => {
+      const order = { correct: 0, adjust: 1, good: 2 };
+      return order[a] - order[b];
+    });
+
+  if (worst.length === 0) {
+    if (matchQuality > 85) return pickRandom(FOLLOW_TEMPLATES.good);
+    return null;
+  }
+
+  const [jointName, status] = worst[0];
+  const templates = FOLLOW_TEMPLATES[status] || FOLLOW_TEMPLATES.adjust;
+
+  // 50% chance to mention specific joint
+  if (Math.random() < 0.5) {
+    return `${jointName}：${pickRandom(templates)}`;
+  }
+  return pickRandom(templates);
 }
 
 /**
