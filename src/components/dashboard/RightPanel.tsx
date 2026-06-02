@@ -230,42 +230,41 @@ export default function RightPanel({
         />
 
         {/* PIP: user camera in corner during follow-along (resizable) */}
-        {followAlongMode && isRunning && pipVideoRef && (
+        {/* Always render the video element so pipVideoRef.current is available when startCamera() runs */}
+        <div
+          className="absolute bottom-3 right-3 rounded-lg overflow-hidden border border-cyber-cyan/20 shadow-lg shadow-black/50 z-30"
+          style={{ width: pipWidth, display: (followAlongMode && isRunning) ? 'block' : 'none' }}
+        >
+          {/* Resize handle — top-left corner */}
           <div
-            className="absolute bottom-3 right-3 rounded-lg overflow-hidden border border-cyber-cyan/20 shadow-lg shadow-black/50 z-30"
-            style={{ width: pipWidth }}
+            className="absolute top-0 left-0 w-4 h-4 cursor-nw-resize z-40 group"
+            onMouseDown={handlePipResizeStart}
           >
-            {/* Resize handle — top-left corner */}
-            <div
-              className="absolute top-0 left-0 w-4 h-4 cursor-nw-resize z-40 group"
-              onMouseDown={handlePipResizeStart}
+            {/* Diagonal grip lines */}
+            <svg
+              className="absolute top-0.5 left-0.5 opacity-40 group-hover:opacity-90 transition-opacity"
+              width="10" height="10" viewBox="0 0 10 10"
             >
-              {/* Diagonal grip lines */}
-              <svg
-                className="absolute top-0.5 left-0.5 opacity-40 group-hover:opacity-90 transition-opacity"
-                width="10" height="10" viewBox="0 0 10 10"
-              >
-                <line x1="8" y1="2" x2="2" y2="8" stroke="#00E5FF" strokeWidth="1" />
-                <line x1="6" y1="2" x2="2" y2="6" stroke="#00E5FF" strokeWidth="0.8" />
-                <line x1="9" y1="2" x2="2" y2="9" stroke="#00E5FF" strokeWidth="0.6" />
-              </svg>
-            </div>
-            {/* Header bar */}
-            <div className="bg-black/60 px-1.5 py-0.5 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyber-cyan animate-pulse" />
-              <span className="text-[8px] font-mono text-cyber-cyan/60 uppercase">你</span>
-              <span className="ml-auto text-[8px] text-slate-600 font-mono">{pipWidth}px</span>
-            </div>
-            <video
-              ref={pipVideoRef}
-              className="w-full aspect-[4/3] object-cover"
-              muted
-              playsInline
-              autoPlay
-              style={{ transform: 'scaleX(-1)' }}
-            />
+              <line x1="8" y1="2" x2="2" y2="8" stroke="#00E5FF" strokeWidth="1" />
+              <line x1="6" y1="2" x2="2" y2="6" stroke="#00E5FF" strokeWidth="0.8" />
+              <line x1="9" y1="2" x2="2" y2="9" stroke="#00E5FF" strokeWidth="0.6" />
+            </svg>
           </div>
-        )}
+          {/* Header bar */}
+          <div className="bg-black/60 px-1.5 py-0.5 flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-cyber-cyan animate-pulse" />
+            <span className="text-[8px] font-mono text-cyber-cyan/60 uppercase">你</span>
+            <span className="ml-auto text-[8px] text-slate-600 font-mono">{pipWidth}px</span>
+          </div>
+          <video
+            ref={pipVideoRef}
+            className="w-full aspect-[4/3] object-cover"
+            muted
+            playsInline
+            autoPlay
+            style={{ transform: 'scaleX(-1)' }}
+          />
+        </div>
 
         {/* Placeholder when not running */}
         {!isRunning && (
