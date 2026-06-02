@@ -23,10 +23,10 @@ export default function CoachVideoUploader({
   onStopFollowAlong,
   followAlongActive,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [videos, setVideos] = useState<PresetCoachVideo[]>([]);
   const [selected, setSelected] = useState<PresetCoachVideo | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
