@@ -33,24 +33,25 @@ export interface WatchHealthData {
 const store = new Map<string, WatchHealthData>();
 const emitter = new EventEmitter();
 
-function key(sessionId: string): string {
+export function normalizeSessionId(sessionId: string): string {
+  const clean = sessionId.trim();
   // Avoid double-prefix if sessionId already starts with "sess_"
-  if (sessionId.startsWith('sess_')) return sessionId;
-  return `sess_${sessionId}`;
+  if (clean.startsWith('sess_')) return clean;
+  return `sess_${clean}`;
 }
 
 export function getHealth(sessionId: string): WatchHealthData | null {
-  return store.get(key(sessionId)) ?? null;
+  return store.get(normalizeSessionId(sessionId)) ?? null;
 }
 
 export function upsertHealth(
   sessionId: string,
   data: Partial<Omit<WatchHealthData, 'sessionId' | 'lastUpdated'>>,
 ): WatchHealthData {
-  const k = key(sessionId);
+  const k = normalizeSessionId(sessionId);
   const existing = store.get(k);
   const merged: WatchHealthData = {
-    sessionId,
+    sessionId: k,
     ...existing,
     ...data,
     lastUpdated: Date.now(),
@@ -59,7 +60,7 @@ export function upsertHealth(
 
   // 通知心率变化
   if (data.heartRate !== undefined) {
-    emitter.emit('heartRate', { sessionId, heartRate: data.heartRate });
+    emitter.emit('heartRate', { sessionId: k, heartRate: data.heartRate });
   }
 
   return merged;

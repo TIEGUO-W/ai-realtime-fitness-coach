@@ -14,6 +14,14 @@ const Spline = dynamic(() => import('@splinetool/react-spline'), { ssr: false })
 const emptySubscribe = () => () => {};
 const useIsClient = () => useSyncExternalStore(emptySubscribe, () => true, () => false);
 
+function ensureHealthSessionId(): string {
+  const existing = localStorage.getItem('health_session_id');
+  if (existing) return existing;
+  const sid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  localStorage.setItem('health_session_id', sid);
+  return sid;
+}
+
 /* ─── Monster Models ─── */
 const MONSTERS = [
   { name: '怪兽橙', splineUrl: 'https://prod.spline.design/nrJ0KxfhMwCC5Ggi/scene.splinecode' },
@@ -70,9 +78,15 @@ export default function LeftPanel({
   const [activeModel, setActiveModel] = useState(0);
   const [splineLoading, setSplineLoading] = useState(true);
   const [qrOpen, setQrOpen] = useState(false);
+  const [healthPageUrl, setHealthPageUrl] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const splineRef = useRef<SplineApp | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sid = ensureHealthSessionId();
+    setHealthPageUrl(`${window.location.origin}/health?sessionId=${encodeURIComponent(sid)}`);
+  }, []);
 
   /* ─── Spline mouth animation ─── */
   const stopTalking = useCallback(() => {
@@ -359,7 +373,7 @@ export default function LeftPanel({
             <span className="text-sm font-bold text-white tracking-wider">连接 Apple Health</span>
             <div className="bg-white rounded-xl p-3">
               <QRCodeSVG
-                value={typeof window !== 'undefined' ? `${window.location.origin}/health` : ''}
+                value={healthPageUrl}
                 size={180}
                 level="M"
                 fgColor="#05080F"
@@ -369,7 +383,7 @@ export default function LeftPanel({
             <div className="flex flex-col items-center gap-2">
               <span className="text-[10px] text-slate-400 text-center">用 iPhone 扫码打开健康档案页面<br/>填写信息 + 安装快捷指令同步心率</span>
               <div className="w-full h-px bg-cyber-cyan/10 my-1" />
-              <span className="text-[10px] text-cyber-cyan/60 text-center font-mono">扫码后在页面内复制 URL</span>
+              <span className="text-[10px] text-cyber-cyan/60 text-center font-mono break-all max-w-[220px]">{healthPageUrl}</span>
             </div>
             <button
               onClick={() => setQrOpen(false)}

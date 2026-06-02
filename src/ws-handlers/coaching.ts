@@ -13,7 +13,7 @@ import { PoseAlgorithmEngine } from './pose-algorithm';
 import { CoachSession } from './coach-session';
 import { parseVoiceCommand } from './voice-command';
 import { ASRClient, Config } from 'coze-coding-dev-sdk';
-import { onHeartRate } from '../lib/health-store';
+import { normalizeSessionId, onHeartRate } from '../lib/health-store';
 import { FollowAlongEngine } from './follow-along-engine';
 import type { AlgorithmResult } from './pose-algorithm';
 import { generateFollowCoaching } from './coaching-templates';
@@ -60,8 +60,9 @@ export function handleCoachingConnection(ws: WebSocket): void {
   let lastFollowCorrectionTime = 0;
   let lowMatchStreak = 0;
 
-  // Listen for Apple Health heart rate updates — push to ALL connected dashboards
+  // Listen for Apple Health heart rate updates for the bound dashboard session.
   const hrHandler = (data: { sessionId: string; heartRate: number }) => {
+    if (healthSessionId && data.sessionId !== normalizeSessionId(healthSessionId)) return;
     if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'heart_rate_update', payload: { heartRate: data.heartRate } }));
     }
@@ -85,8 +86,8 @@ export function handleCoachingConnection(ws: WebSocket): void {
     if (msg.type === 'set_session') {
       const sid = (msg.payload as { sessionId: string }).sessionId;
       if (sid) {
-        healthSessionId = sid;
-        session.setSessionId(sid);
+        healthSessionId = normalizeSessionId(sid);
+        session.setSessionId(healthSessionId);
       }
       return;
     }

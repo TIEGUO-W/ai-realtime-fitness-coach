@@ -33,6 +33,14 @@ const MP_VISION_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10
 
 type SourceMode = 'local';
 
+function ensureHealthSessionId(): string {
+  const existing = localStorage.getItem('health_session_id');
+  if (existing) return existing;
+  const sid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  localStorage.setItem('health_session_id', sid);
+  return sid;
+}
+
 function getSkeletonColor(quality: 'good' | 'warning' | 'error'): string {
   switch (quality) {
     case 'good': return '#22D3A7';
@@ -469,13 +477,16 @@ export default function Dashboard() {
 
   // ─── Fetch health profile for AI plan modal ──────────────────
   useEffect(() => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
+    const sid = ensureHealthSessionId();
+    sessionIdRef.current = sid;
     const fetchHealth = async () => {
       try {
         const res = await fetch(`/api/health?sessionId=${encodeURIComponent(sid)}`);
         const data = await res.json();
-        if (data.health) healthDataRef.current = data.health;
+        if (data.health) {
+          healthDataRef.current = data.health;
+          if (data.health.heartRate) setRealHeartRate(data.health.heartRate);
+        }
       } catch { /* ignore */ }
     };
     fetchHealth();
@@ -485,11 +496,14 @@ export default function Dashboard() {
 
   // ─── Connect WS ──────────────────────────────────────
   useEffect(() => {
+    const healthSid = ensureHealthSessionId();
+    sessionIdRef.current = healthSid;
     const ws = createWsConnection({
       path: '/ws/coaching',
       onMessage: handleWsMessage,
       onOpen: () => {
         setWsConnected(true);
+        ws.send({ type: 'set_session', payload: { sessionId: healthSid } });
         setData(prev => ({
           ...prev,
           environment: { ...prev.environment, connectionStatus: 'connected' as const, aiActive: true },
@@ -504,11 +518,6 @@ export default function Dashboard() {
       },
     });
     wsRef.current = ws;
-    // Send health session ID so heart rate events are routed correctly
-    const healthSid = localStorage.getItem('health_session_id');
-    if (healthSid) {
-      ws.send({ type: 'set_session', payload: { sessionId: healthSid } });
-    }
     return () => { ws.close(); };
   }, [handleWsMessage]);
 
@@ -917,8 +926,8 @@ export default function Dashboard() {
   const handleStartWorkout = useCallback(() => {
     unlockMobileAudio();
     // Use health session ID from localStorage so Apple Health data matches
-    const healthSid = typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null;
-    sessionIdRef.current = healthSid || `session_${Date.now()}`;
+    const healthSid = ensureHealthSessionId();
+    sessionIdRef.current = healthSid;
     startTimeRef.current = Date.now();
     completedRef.current = false;
     smoothedScoreRef.current = 50;
@@ -979,8 +988,8 @@ export default function Dashboard() {
               // Auto-start workout + camera if not already running
               if (!isRunning) {
                 unlockMobileAudio();
-                const healthSid = typeof window !== 'undefined' ? localStorage.getItem('health_session_id') : null;
-                sessionIdRef.current = healthSid || `session_${Date.now()}`;
+                const healthSid = ensureHealthSessionId();
+                sessionIdRef.current = healthSid;
                 startTimeRef.current = Date.now();
                 completedRef.current = false;
                 smoothedScoreRef.current = 50;

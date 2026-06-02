@@ -34,12 +34,17 @@ export default function HealthPage() {
   const [fitnessLevel, setFitness] = useState<FitnessLevel>('intermediate');
   const [goal, setGoal] = useState<Goal>('general');
   const [saved, setSaved] = useState(false);
+  const [uploadUrl, setUploadUrl] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sidFromUrl = params.get('sessionId') || params.get('session_id');
     const existing = localStorage.getItem('health_session_id');
-    const sid = existing || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    if (!existing) localStorage.setItem('health_session_id', sid);
+    const sid = sidFromUrl || existing || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    if (sid !== existing) localStorage.setItem('health_session_id', sid);
     setSessionId(sid);
+    setUploadUrl(`${window.location.origin}/api/health?sessionId=${encodeURIComponent(sid)}`);
     fetch(`/api/health?sessionId=${encodeURIComponent(sid)}`).then(r => r.json()).then(d => {
       if (d.health) {
         setHealth(d.health);
@@ -78,11 +83,19 @@ export default function HealthPage() {
     const newSid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     localStorage.setItem('health_session_id', newSid);
     setSessionId(newSid);
+    setUploadUrl(`${window.location.origin}/api/health?sessionId=${encodeURIComponent(newSid)}`);
     setHealth(null);
     setSaved(false);
     setAge(25);
     setFitness('intermediate');
     setGoal('general');
+  };
+
+  const copyUploadUrl = async () => {
+    if (!uploadUrl) return;
+    await navigator.clipboard.writeText(uploadUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
   };
 
   const hasHeartRate = !!health?.heartRate;
@@ -230,7 +243,7 @@ export default function HealthPage() {
 
             {/* Install shortcut */}
             <a
-              href="https://www.icloud.com/shortcuts/8606292958e84dd599dc044c7ba22335"
+              href="https://www.icloud.com/shortcuts/dfbd7fc9cf984585a5da6bf637fe923e"
               target="_blank"
               className="block w-full"
             >
@@ -239,12 +252,30 @@ export default function HealthPage() {
               </Button>
             </a>
 
+            {uploadUrl && (
+              <div className="bg-[#0A0C12] rounded-xl p-3 border border-[rgba(0,229,255,0.06)] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[#00E5FF]">上传地址</span>
+                  <button
+                    type="button"
+                    onClick={copyUploadUrl}
+                    className="text-[10px] text-black bg-[#00E5FF] rounded-md px-2 py-1 font-medium"
+                  >
+                    {copied ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <p className="break-all text-[10px] leading-relaxed text-[#6B7280] font-mono">
+                  {uploadUrl}
+                </p>
+              </div>
+            )}
+
             {/* Simple instructions */}
             <div className="bg-[#0A0C12] rounded-xl p-3 border border-[rgba(0,229,255,0.06)]">
               <h3 className="text-xs font-bold text-[#00E5FF] mb-2">3 步连接</h3>
               <ol className="text-xs text-[#6B7280] space-y-2 list-decimal list-inside leading-relaxed">
                 <li>点击上方按钮安装快捷指令</li>
-                <li>打开快捷指令，填入服务器地址后运行</li>
+                <li>把上传地址粘贴到快捷指令的服务器地址里</li>
                 <li>心率每 2 秒自动上传，教练面板实时显示</li>
               </ol>
             </div>
