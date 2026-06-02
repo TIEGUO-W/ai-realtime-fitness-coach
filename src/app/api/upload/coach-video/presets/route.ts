@@ -1,93 +1,34 @@
 import { NextResponse } from 'next/server';
-import { S3Storage } from 'coze-coding-dev-sdk';
+import fs from 'fs';
+import path from 'path';
 
-const PRESET_PREFIX = 'presets/coach-videos/';
+export const dynamic = 'force-dynamic';
 
-/** Human-readable titles for preset videos, keyed by the short id portion */
-const PRESET_TITLES: Record<string, string> = {
-  'pamela-12min-slim-legs': '帕梅拉 12分钟瘦腿训练',
-  'pamela-10min-cardio-bottle': '帕梅拉 10分钟活力有氧+水瓶',
-  'pamela-10min-abs-legs': '帕梅拉 10分钟站立瘦腹+纤腿',
-  'pamela-15min-jumping-cardio': '帕梅拉 15分钟跳跃有氧',
-  'zhouye-10min-standing-abs': '周六野 10分钟站立马甲线瘦腰',
-};
-
-function getShortId(key: string): string {
-  // key like "presets/coach-videos/pamela-12min-slim-legs_44dc64f8.mp4"
-  const fileName = key.split('/').pop() || '';
-  const noExt = fileName.replace(/\.mp4$/, '');
-  // Remove UUID suffix: "pamela-12min-slim-legs_44dc64f8" → "pamela-12min-slim-legs"
-  return noExt.replace(/_[a-f0-9]{8}$/, '');
-}
-
-let storageInstance: S3Storage | null = null;
-function getStorage(): S3Storage {
-  if (!storageInstance) {
-    storageInstance = new S3Storage({
-      endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-      accessKey: '',
-      secretKey: '',
-      bucketName: process.env.COZE_BUCKET_NAME,
-      region: 'cn-beijing',
-    });
-  }
-  return storageInstance;
-}
+const VIDEOS_DIR = path.join(process.cwd(), 'public', 'uploads', 'coach-videos');
 
 export async function GET() {
   try {
-    const storage = getStorage();
-    const result = await storage.listFiles({ prefix: PRESET_PREFIX, maxKeys: 50 });
+    if (!fs.existsSync(VIDEOS_DIR)) {
+      return NextResponse.json({ videos: [] });
+    }
 
-    const videos = await Promise.all(
-      result.keys.map(async (key) => {
-        const shortId = getShortId(key);
-        const title = PRESET_TITLES[shortId] || shortId;
-        // Generate a presigned URL valid for 6 hours
-        const coachVideoUrl = await storage.generatePresignedUrl({
-          key,
-          expireTime: 21600,
-        });
-        return {
-          recordingId: shortId,
-          title,
-          coachVideoUrl,
-          hasSkeleton: false,
-        };
-      }),
-    );
+    const files = fs.readdirSync(VIDEOS_DIR).filter(f => f.endsWith('.mp4'));
 
-    // Sort by defined title order
-    const titleOrder = Object.keys(PRESET_TITLES);
-    videos.sort((a, b) => titleOrder.indexOf(a.recordingId) - titleOrder.indexOf(b.recordingId));
+    const videos = files.map(filename => {
+      const nameWithoutExt = filename.replace(/\.mp4$/, '');
+      return {
+        recordingId: nameWithoutExt,
+        title: nameWithoutExt
+          .replace(/-/g, ' ')
+          .replace(/^(\w)/, (_, c) => c.toUpperCase()),
+        coachVideoUrl: `/uploads/coach-videos/${filename}`,
+        hasSkeleton: false,
+      };
+    });
 
     return NextResponse.json({ videos });
   } catch (err) {
-    console.error('[presets] Failed to load from object storage:', err);
-    // Fallback: try local filesystem (dev environment)
-    try {
-      const fs = await import('fs/promises');
-      const path = await import('path');
-      const dir = path.join(process.cwd(), 'public', 'uploads', 'coach-videos');
-      const files = await fs.readdir(dir).catch(() => [] as string[]);
-      const mp4Files = files.filter(f => f.endsWith('.mp4') && !f.match(/^[0-9a-f]{8}-/));
-      if (mp4Files.length > 0) {
-        const localVideos = mp4Files.map(f => {
-          const noExt = f.replace(/\.mp4$/, '');
-          const shortId = noExt.replace(/_[a-f0-9]{8}$/, '');
-          return {
-            recordingId: shortId,
-            title: PRESET_TITLES[shortId] || shortId,
-            coachVideoUrl: `/uploads/coach-videos/${f}`,
-            hasSkeleton: false,
-          };
-        });
-        console.log('[presets] Fallback to local files:', localVideos.length);
-        return NextResponse.json({ videos: localVideos });
-      }
-    } catch (fallbackErr) {
-      console.error('[presets] Local fallback also failed:', fallbackErr);
-    }
-    return NextResponse.json({ videos: [], error: 'Failed to load preset videos from object storage' });
+    console.error('[presets] Error:', err);
+    return NextResponse.json({ videos: [] });
   }
 }

@@ -30,8 +30,9 @@ Thumbs.db
 .turbo/
 .cozeproj/reduction
 
-# Uploads & runtime data
-public/uploads/
+# Runtime data only (skeletons, tts-audio, user uploaded videos)
+public/uploads/coach-skeletons/
+public/uploads/tts-audio/
 public/*.task
 
 # TypeScript incremental build info
