@@ -29,3 +29,10 @@ Thumbs.db
 # Cache
 .turbo/
 .cozeproj/reduction
+
+# Uploads & runtime data
+public/uploads/
+public/*.task
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo

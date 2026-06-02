@@ -85,6 +85,7 @@ export default function Dashboard() {
   const frameBufferRef = useRef<Landmark[][]>([]);
   const pendingVoiceRef = useRef<string[]>([]);
   const lastFrameSentRef = useRef<number>(0);
+  const smoothedScoreRef = useRef<number>(50); // EMA 平滑分数，防止闪烁
 
   // Dashboard data derived from WS state
   const [data, setData] = useState<DashboardData>(() => ({
@@ -104,6 +105,7 @@ export default function Dashboard() {
   const [matchQuality, setMatchQuality] = useState(0);
   const coachVideoRef = useRef<HTMLVideoElement>(null);
   const coachCanvasRef = useRef<HTMLCanvasElement>(null);
+  const pipVideoRef = useRef<HTMLVideoElement>(null);
   const coachPausedRef = useRef(false);
 
   // Coach video pause/resume → tell server to stop/start talking
@@ -292,6 +294,10 @@ export default function Dashboard() {
         setDetectedExercise(p.exercise);
         setQuality(p.quality);
         if (p.effect) setExerciseEffect(p.effect);
+        // EMA 平滑分数，防止骨架抖动导致数字闪烁
+        const rawScore = p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40);
+        smoothedScoreRef.current = smoothedScoreRef.current + 0.15 * (rawScore - smoothedScoreRef.current);
+        const displayScore = Math.round(smoothedScoreRef.current);
         setData(prev => ({
           ...prev,
           workout: {
@@ -299,19 +305,23 @@ export default function Dashboard() {
             currentAction: EXERCISE_LABELS[p.exercise] || p.exercise || prev.workout.currentAction,
             reps: Math.max(prev.workout.reps, p.repCount),
             isFormDeformed: p.quality === 'error',
-            score: p.qualityScore ?? (p.quality === 'good' ? 90 : p.quality === 'warning' ? 70 : 40),
+            score: displayScore,
           },
         }));
         break;
       }
       case 'rep_completed': {
         const p = msg.payload as AlgorithmUpdatePayload;
+        // 用 EMA 平滑，但完成动作时偏重本次分数
+        if (p.qualityScore != null) {
+          smoothedScoreRef.current = smoothedScoreRef.current + 0.3 * (p.qualityScore - smoothedScoreRef.current);
+        }
         setData(prev => ({
           ...prev,
           workout: {
             ...prev.workout,
             reps: Math.max(prev.workout.reps, p.repCount),
-            score: p.qualityScore ?? prev.workout.score,
+            score: Math.round(smoothedScoreRef.current),
           },
         }));
         break;
@@ -335,7 +345,9 @@ export default function Dashboard() {
             currentAction: EXERCISE_LABELS[fb.exercise] || fb.exercise || prev.workout.currentAction,
             reps: Math.max(prev.workout.reps, fb.repCount),
             isFormDeformed: fb.quality === 'error',
-            score: fb.qualityScore ?? prev.workout.score,
+            score: fb.qualityScore != null
+              ? Math.round(smoothedScoreRef.current = smoothedScoreRef.current + 0.3 * (fb.qualityScore - smoothedScoreRef.current))
+              : prev.workout.score,
           },
           assistant: {
             message: coachMsg || prev.assistant.message,
@@ -422,7 +434,9 @@ export default function Dashboard() {
           ...prev,
           workout: {
             ...prev.workout,
-            score: p.userScore ?? prev.workout.score,
+            score: p.userScore != null
+              ? Math.round(smoothedScoreRef.current = smoothedScoreRef.current + 0.15 * (p.userScore - smoothedScoreRef.current))
+              : prev.workout.score,
           },
         }));
         break;
@@ -545,6 +559,10 @@ export default function Dashboard() {
           video.srcObject = stream;
           await video.play();
           cameraRef.current = stream;
+        }
+        // Also set stream on PIP video for follow-along mode
+        if (pipVideoRef.current) {
+          pipVideoRef.current.srcObject = stream;
         }
         await initMediaPipe();
       } catch (err) {
@@ -903,6 +921,7 @@ export default function Dashboard() {
     sessionIdRef.current = healthSid || `session_${Date.now()}`;
     startTimeRef.current = Date.now();
     completedRef.current = false;
+    smoothedScoreRef.current = 50;
     setRepCount(0);
     setIsRunning(true);
     setData(prev => ({
@@ -964,6 +983,7 @@ export default function Dashboard() {
                 sessionIdRef.current = healthSid || `session_${Date.now()}`;
                 startTimeRef.current = Date.now();
                 completedRef.current = false;
+                smoothedScoreRef.current = 50;
                 setRepCount(0);
                 setIsRunning(true);
                 setData(prev => ({
@@ -1033,6 +1053,7 @@ export default function Dashboard() {
           matchQuality={matchQuality}
           coachVideoRef={coachVideoRef}
           coachVideoUrl={coachVideoUrl}
+          pipVideoRef={pipVideoRef}
         />
       </div>
 
